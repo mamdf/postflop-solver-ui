@@ -7,10 +7,10 @@ Fork of [b-inary/wasm-postflop](https://github.com/b-inary/wasm-postflop) (AGPL-
 
 ```sh
 just setup
-just dev           # http://127.0.0.1:5174 (PORT=...), proxies /game, /solves, /info to the API
+just dev           # UI on http://127.0.0.1:5174 (PORT=...) + API on :3001
 ```
 
-`just dev` does not start the API: it must already be running at `127.0.0.1:3001` (override with `API_URL=http://host:port just dev`).
+`just dev` reuses a healthy API on `:3001` or starts it (`cargo run --release`), and stops only what it started. `just web` runs the UI alone against `API_URL` (default `http://127.0.0.1:3001`); an explicit `API_URL` is never started by `just dev`.
 
 ## Production
 

@@ -117,10 +117,10 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref } from "vue";
+import { defineComponent, onBeforeUnmount, ref } from "vue";
 import { useConfigStore } from "../store";
 import { ranks, rankPat } from "../utils";
-import { RangeManager } from "../manager-stubs";
+import { rangeApi, RangeOp } from "../api";
 
 import DbItemPicker from "./DbItemPicker.vue";
 
@@ -150,13 +150,19 @@ export default defineComponent({
   setup(props) {
     const config = useConfigStore();
 
-    const range = RangeManager.new();
     const rangeStore = config.range[props.player];
     const rangeStoreRaw = config.rangeRaw[props.player];
     const rangeText = ref("");
     const rangeTextError = ref("");
     const weight = ref(100);
     const numCombos = ref(0);
+
+    // The grid is edited locally; cell edits are sent to the server in batches.
+    // baseRaw is the last range the server confirmed, ops the edits made since.
+    let baseRaw = Array.from(rangeStoreRaw);
+    let ops: RangeOp[] = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let seq = 0;
 
     let draggingMode: DraggingMode = "none";
 
@@ -174,21 +180,57 @@ export default defineComponent({
       return rangeStore[cellIndex(row, col)];
     };
 
-    const onUpdate = () => {
-      rangeStoreRaw.set(range.raw_data());
-      rangeText.value = range.to_string();
+    const updateNumCombos = () => {
+      let sum = 0;
+      for (let row = 1; row <= 13; ++row) {
+        for (let col = 1; col <= 13; ++col) {
+          const combos = row === col ? 6 : row < col ? 4 : 12;
+          sum += (rangeStore[cellIndex(row, col)] / 100) * combos;
+        }
+      }
+      numCombos.value = sum;
+    };
+
+    const applyResponse = (res: {
+      raw: number[];
+      text: string;
+      weights: number[];
+    }) => {
+      baseRaw = res.raw;
+      rangeStoreRaw.set(res.raw);
+      rangeText.value = res.text;
       rangeTextError.value = "";
-      numCombos.value = rangeStoreRaw.reduce((acc, cur) => acc + cur, 0);
+    };
+
+    const setError = (e: unknown) => {
+      rangeTextError.value = e instanceof Error ? e.message : String(e);
+    };
+
+    const flush = async () => {
+      clearTimeout(timer);
+      if (ops.length === 0) return;
+      const mySeq = ++seq;
+      const sent = ops.length;
+      try {
+        const res = await rangeApi.update({ raw: baseRaw, ops: ops.slice() });
+        if (mySeq !== seq) return;
+        ops = ops.slice(sent);
+        if (ops.length === 0) applyResponse(res);
+        else baseRaw = res.raw;
+      } catch (e) {
+        if (mySeq === seq) setError(e);
+      }
     };
 
     const update = (row: number, col: number, weight: number) => {
-      const idx = 13 * (row - 1) + col - 1;
-      range.update(row, col, weight / 100);
-      rangeStore[idx] = weight;
-      onUpdate();
+      rangeStore[cellIndex(row, col)] = weight;
+      ops.push({ row: row - 1, col: col - 1, weight: weight / 100 });
+      updateNumCombos();
+      clearTimeout(timer);
+      timer = setTimeout(flush, 100);
     };
 
-    const onRangeTextChange = () => {
+    const onRangeTextChange = async () => {
       const trimmed = rangeText.value.replace(trimRegex, "$1").trim();
       const ranges = trimmed.split(",");
 
@@ -205,16 +247,24 @@ export default defineComponent({
         }
       }
 
-      const errorString = range.from_string(trimmed);
-
-      if (errorString) {
-        rangeTextError.value = errorString;
-      } else {
-        const weights = range.get_weights();
-        for (let i = 0; i < 13 * 13; ++i) {
-          rangeStore[i] = weights[i] * 100;
+      // text replaces the whole range, so pending cell edits are dropped
+      clearTimeout(timer);
+      ops = [];
+      const mySeq = ++seq;
+      try {
+        const res = await rangeApi.update({ text: trimmed });
+        if (mySeq !== seq) return;
+        if (res.error) {
+          rangeTextError.value = res.error;
+        } else {
+          for (let i = 0; i < 13 * 13; ++i) {
+            rangeStore[i] = res.weights[i] * 100;
+          }
+          applyResponse(res);
+          updateNumCombos();
         }
-        onUpdate();
+      } catch (e) {
+        if (mySeq === seq) setError(e);
       }
     };
 
@@ -246,20 +296,31 @@ export default defineComponent({
       weight.value = Math.round(Math.max(0, Math.min(100, weight.value)));
     };
 
-    const clearRange = () => {
-      range.clear();
+    const clearRange = async () => {
+      clearTimeout(timer);
+      ops = [];
+      const mySeq = ++seq;
       rangeStore.fill(0);
       rangeStoreRaw.fill(0);
+      baseRaw = Array.from(rangeStoreRaw);
       rangeText.value = "";
       rangeTextError.value = "";
       weight.value = 100;
       numCombos.value = 0;
+      try {
+        const res = await rangeApi.update({ clear: true });
+        if (mySeq === seq) baseRaw = res.raw;
+      } catch (e) {
+        if (mySeq === seq) setError(e);
+      }
     };
 
     const loadRange = (rangeStr: unknown) => {
       rangeText.value = String(rangeStr);
       onRangeTextChange();
     };
+
+    onBeforeUnmount(flush);
 
     return {
       yellow500,

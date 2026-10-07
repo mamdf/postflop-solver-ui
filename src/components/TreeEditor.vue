@@ -144,6 +144,7 @@
     <button
       class="button-base button-blue"
       :disabled="
+        loading ||
         isSelectedTerminal ||
         isAfterAllin ||
         betAmount < minAmount ||
@@ -158,7 +159,7 @@
 
     <button
       class="button-base button-red"
-      :disabled="selectedSpotIndex === 1"
+      :disabled="loading || selectedSpotIndex === 1"
       @click="removeSelectedNode"
     >
       Remove Selected Node
@@ -252,14 +253,16 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, nextTick, ref } from "vue";
+import { computed, defineComponent, nextTick, onMounted, ref } from "vue";
 import { useConfigStore } from "../store";
 import { convertBetString, readableLineString } from "../utils";
-import { Spot, SpotRoot, SpotChance, SpotPlayer } from "../result-types";
-import { TreeManager } from "../manager-stubs";
+import { Spot, SpotRoot, SpotPlayer } from "../result-types";
+import { treeApi, TreeEdit, TreeNode, TreeParams, TreeResponse } from "../api";
 
 import { CheckIcon } from "@heroicons/vue/20/solid";
 import { TrashIcon } from "@heroicons/vue/24/outline";
+
+type Bets = [number, number];
 
 export default defineComponent({
   components: {
@@ -278,33 +281,41 @@ export default defineComponent({
     const config = useConfigStore();
 
     const boardLength = config.expectedBoardLength;
-    const treeManager = TreeManager.new(
-      boardLength,
-      config.startingPot,
-      config.effectiveStack,
-      config.donkOption,
-      convertBetString(config.oopFlopBet),
-      convertBetString(config.oopFlopRaise),
-      convertBetString(config.oopTurnBet),
-      convertBetString(config.oopTurnRaise),
-      config.donkOption ? convertBetString(config.oopTurnDonk) : "",
-      convertBetString(config.oopRiverBet),
-      convertBetString(config.oopRiverRaise),
-      config.donkOption ? convertBetString(config.oopRiverDonk) : "",
-      convertBetString(config.ipFlopBet),
-      convertBetString(config.ipFlopRaise),
-      convertBetString(config.ipTurnBet),
-      convertBetString(config.ipTurnRaise),
-      convertBetString(config.ipRiverBet),
-      convertBetString(config.ipRiverRaise),
-      config.addAllInThreshold / 100,
-      config.forceAllInThreshold / 100,
-      config.mergingThreshold / 100,
-      config.addedLines,
-      config.removedLines
-    );
+    // added/removed lines are kept here and refreshed from every response
+    const params: TreeParams = {
+      board_len: boardLength,
+      starting_pot: config.startingPot,
+      effective_stack: config.effectiveStack,
+      donk_option: config.donkOption,
+      oop_flop_bet: convertBetString(config.oopFlopBet),
+      oop_flop_raise: convertBetString(config.oopFlopRaise),
+      oop_turn_bet: convertBetString(config.oopTurnBet),
+      oop_turn_raise: convertBetString(config.oopTurnRaise),
+      oop_turn_donk: config.donkOption
+        ? convertBetString(config.oopTurnDonk)
+        : "",
+      oop_river_bet: convertBetString(config.oopRiverBet),
+      oop_river_raise: convertBetString(config.oopRiverRaise),
+      oop_river_donk: config.donkOption
+        ? convertBetString(config.oopRiverDonk)
+        : "",
+      ip_flop_bet: convertBetString(config.ipFlopBet),
+      ip_flop_raise: convertBetString(config.ipFlopRaise),
+      ip_turn_bet: convertBetString(config.ipTurnBet),
+      ip_turn_raise: convertBetString(config.ipTurnRaise),
+      ip_river_bet: convertBetString(config.ipRiverBet),
+      ip_river_raise: convertBetString(config.ipRiverRaise),
+      add_allin_threshold: config.addAllInThreshold / 100,
+      force_allin_threshold: config.forceAllInThreshold / 100,
+      merging_threshold: config.mergingThreshold / 100,
+      added_lines: config.addedLines,
+      removed_lines: config.removedLines,
+    };
 
-    const isTreeError = treeManager.is_error();
+    const isTreeError = ref(false);
+    const loading = ref(false);
+    // the last request wins; older responses are dropped
+    let querySeq = 0;
 
     const rootSpot: SpotRoot = {
       type: "root",
@@ -316,6 +327,8 @@ export default defineComponent({
       stack: config.effectiveStack,
     };
     const spots = ref<Spot[]>([rootSpot]);
+    // total bet amounts at the node that produced each spot (parallel to spots)
+    let spotBets: Bets[] = [[0, 0]];
     const selectedSpotIndex = ref(-1);
 
     const isSelectedTerminal = computed(() => {
@@ -364,9 +377,9 @@ export default defineComponent({
       return ret;
     });
 
-    const addedLines = ref(treeManager.added_lines());
-    const removedLines = ref(treeManager.removed_lines());
-    const invalidLines = ref(treeManager.invalid_terminals());
+    const addedLines = ref("");
+    const removedLines = ref("");
+    const invalidLines = ref("");
 
     const addedLinesArray = computed(() =>
       addedLines.value === ""
@@ -386,36 +399,135 @@ export default defineComponent({
         : invalidLines.value.split(",").map(readableLineString)
     );
 
+    // line of displayed actions (e.g. "Bet:100") leading to a spot
     const encodeLine = (spotIndex: number) => {
       const ret: string[] = [];
       for (let i = 1; i < spotIndex; ++i) {
         const spot = spots.value[i];
         if (spot.type === "player") {
           const action = spot.actions[spot.selectedIndex];
-          if (action.name === "Fold") {
-            ret.push("F");
-          } else if (action.name === "Check") {
-            ret.push("X");
-          } else if (action.name === "Call") {
-            ret.push("C");
-          } else if (action.name === "Bet") {
-            ret.push("B" + action.amount);
-          } else if (action.name === "Raise") {
-            ret.push("R" + action.amount);
-          } else if (action.name === "Allin") {
-            ret.push("A" + action.amount);
-          }
+          ret.push(`${action.name}:${action.amount}`);
         }
       }
       return ret;
     };
 
-    const selectSpot = (
+    const absorb = (res: TreeResponse) => {
+      isTreeError.value = res.is_error;
+      params.added_lines = res.added_lines;
+      params.removed_lines = res.removed_lines;
+      addedLines.value = res.added_lines;
+      removedLines.value = res.removed_lines;
+      invalidLines.value = res.invalid_terminals;
+    };
+
+    const parseActions = (actions: string) => {
+      const list = actions.split("/");
+      if (list[0] === "") list.pop();
+      return list.map((action, i) => {
+        const [name, amount] = action.split(":");
+        return { index: i, name, amount, isSelected: false, color: "#000" };
+      });
+    };
+
+    // Appends the spot(s) for `node`; the spot index is the list length.
+    const pushNode = (list: Spot[], bets: Bets[], node: TreeNode) => {
+      const total = node.total_bet_amount;
+      const prevSpot = list[list.length - 1];
+      const index = list.length;
+
+      if (node.is_terminal) {
+        const prev = prevSpot as SpotPlayer;
+        const prevAction = prev.actions[prev.selectedIndex];
+
+        let equityOop = -1;
+        if (prevAction.name === "Fold") {
+          equityOop = prev.player === "oop" ? 0 : 1;
+        }
+
+        list.push({
+          type: "terminal",
+          index,
+          player: "end",
+          selectedIndex: -1,
+          prevPlayer: prev.player,
+          equityOop,
+          pot: config.startingPot + total[0] + total[1],
+        });
+        bets.push(total);
+      } else if (node.is_chance) {
+        const prev = prevSpot as SpotPlayer;
+        const hasTurn = list.some((spot) => spot.player === "turn");
+
+        list.push(
+          {
+            type: "chance",
+            index,
+            player: hasTurn ? "river" : "turn",
+            selectedIndex: -1,
+            prevPlayer: prev.player,
+            cards: Array.from({ length: 52 }, (_, i) => ({
+              card: i,
+              isSelected: false,
+              isDead: true,
+            })),
+            pot: config.startingPot + 2 * total[0],
+            stack: config.effectiveStack - total[0],
+          },
+          {
+            type: "player",
+            index: index + 1,
+            player: "oop",
+            selectedIndex: -1,
+            actions: parseActions(node.actions),
+          }
+        );
+        bets.push(total, total);
+      } else {
+        list.push({
+          type: "player",
+          index,
+          player: prevSpot.player === "oop" ? "ip" : "oop",
+          selectedIndex: -1,
+          actions: parseActions(node.actions),
+        });
+        bets.push(total);
+      }
+    };
+
+    // Rebuilds all spots from a response to `line`; stops where the line no
+    // longer applies (failed_at replaces play() === -1).
+    const buildSpots = (res: TreeResponse) => {
+      const list: Spot[] = [rootSpot];
+      const bets: Bets[] = [[0, 0]];
+      pushNode(list, bets, res.nodes[0]);
+
+      let failed = res.failed_at !== null;
+      const count = res.failed_at ?? res.line.length;
+      for (let i = 0; i < count; ++i) {
+        const node = res.nodes[i + 1];
+        const spot = list[list.length - 1] as SpotPlayer;
+        const index = spot.actions.findIndex(
+          (a) => `${a.name}:${a.amount}` === res.line[i]
+        );
+        if (!node || index === -1) {
+          failed = true;
+          break;
+        }
+        spot.selectedIndex = index;
+        spot.actions[index].isSelected = true;
+        pushNode(list, bets, node);
+      }
+
+      return { list, bets, failed };
+    };
+
+    const selectSpot = async (
       spotIndex: number,
       needSplice: boolean,
       needRebuild: boolean,
       needAmountUpdate: boolean
-    ) => {
+    ): Promise<void> => {
       if (
         !needSplice &&
         !needRebuild &&
@@ -425,86 +537,68 @@ export default defineComponent({
       }
 
       if (spotIndex === 0) {
-        selectSpot(1, true, false, selectedSpotIndex.value !== 1);
-        return;
+        return selectSpot(1, true, false, selectedSpotIndex.value !== 1);
       }
 
       if (!needSplice && spots.value[spotIndex]?.type === "chance") {
-        selectSpot(spotIndex + 1, false, false, true);
-        return;
+        return selectSpot(spotIndex + 1, false, false, true);
       }
 
-      if (needRebuild) {
-        const selectedSpotIndexTmp = selectedSpotIndex.value;
-        const line = encodeLine(spots.value.length - 1);
-        spots.value = [rootSpot];
+      const seq = ++querySeq;
+      loading.value = true;
+      try {
+        let list = spots.value;
+        let bets = spotBets;
+        let selected = spotIndex;
 
-        selectedSpotIndex.value = 1;
-        totalBetAmount.value = [0, 0];
+        if (needRebuild) {
+          const res = await treeApi.query(
+            params,
+            encodeLine(spots.value.length - 1)
+          );
+          if (seq !== querySeq) return;
+          absorb(res);
+          if (res.is_error) return;
 
-        treeManager.back_to_root();
-        pushResultsPlayer();
+          const built = buildSpots(res);
+          list = built.list;
+          bets = built.bets;
+          if (built.failed) needAmountUpdate = true;
+          selected = Math.min(selectedSpotIndex.value, list.length - 1);
+        } else if (needSplice) {
+          const res = await treeApi.query(params, encodeLine(selected));
+          if (seq !== querySeq) return;
+          absorb(res);
+          if (res.is_error || res.failed_at !== null) return;
 
-        for (let i = 0; i < line.length; ++i) {
-          const index = treeManager.play(line[i]);
-          if (index === -1) {
-            needAmountUpdate = true;
-            break;
-          }
-
-          const spot = spots.value[selectedSpotIndex.value] as SpotPlayer;
-          const action = spot.actions[index];
-          spot.selectedIndex = index;
-          action.isSelected = true;
-
-          ++selectedSpotIndex.value;
-          totalBetAmount.value = Array.from(treeManager.total_bet_amount());
-
-          if (treeManager.is_terminal_node()) {
-            pushResultsTerminal();
-          } else if (treeManager.is_chance_node()) {
-            pushResultsChance();
-            ++selectedSpotIndex.value;
-          } else {
-            pushResultsPlayer();
-          }
+          list = list.slice(0, selected);
+          bets = bets.slice(0, selected);
+          pushNode(list, bets, res.nodes[res.nodes.length - 1]);
+          if (list[selected].type === "chance") ++selected;
         }
 
-        if (selectedSpotIndexTmp < selectedSpotIndex.value) {
-          selectedSpotIndex.value = selectedSpotIndexTmp;
-        }
-      } else {
-        selectedSpotIndex.value = spotIndex;
-      }
+        spots.value = list;
+        spotBets = bets;
+        selectedSpotIndex.value = selected;
+        totalBetAmount.value = [...bets[selected]];
 
-      const line = encodeLine(selectedSpotIndex.value);
-      treeManager.apply_history(line.join("-"));
-      totalBetAmount.value = Array.from(treeManager.total_bet_amount());
-
-      if (needSplice) {
-        spots.value.splice(selectedSpotIndex.value);
-        if (treeManager.is_terminal_node()) {
-          pushResultsTerminal();
-        } else if (treeManager.is_chance_node()) {
-          pushResultsChance();
-          ++selectedSpotIndex.value;
+        const prev = list[selected - 1];
+        if (prev.type === "player") {
+          prevBetAmount.value = Number(prev.actions[prev.selectedIndex].amount);
         } else {
-          pushResultsPlayer();
+          prevBetAmount.value = 0;
         }
-      }
 
-      const prev = spots.value[selectedSpotIndex.value - 1];
-      if (prev.type === "player") {
-        prevBetAmount.value = Number(prev.actions[prev.selectedIndex].amount);
-      } else {
-        prevBetAmount.value = 0;
-      }
+        if (needAmountUpdate) {
+          betAmount.value = minAmount.value;
+        }
 
-      if (needAmountUpdate) {
-        betAmount.value = minAmount.value;
+        autoScrollNav();
+      } catch {
+        if (seq === querySeq) isTreeError.value = true;
+      } finally {
+        if (seq === querySeq) loading.value = false;
       }
-
-      autoScrollNav();
     };
 
     const autoScrollNav = async () => {
@@ -520,99 +614,6 @@ export default defineComponent({
       }
     };
 
-    const pushResultsTerminal = () => {
-      const prevSpot = spots.value[selectedSpotIndex.value - 1] as SpotPlayer;
-      const prevAction = prevSpot.actions[prevSpot.selectedIndex];
-
-      let equityOop = -1;
-      if (prevAction.name === "Fold") {
-        equityOop = prevSpot.player === "oop" ? 0 : 1;
-      }
-
-      spots.value.push({
-        type: "terminal",
-        index: selectedSpotIndex.value,
-        player: "end",
-        selectedIndex: -1,
-        prevPlayer: prevSpot.player,
-        equityOop,
-        pot:
-          config.startingPot +
-          totalBetAmount.value[0] +
-          totalBetAmount.value[1],
-      });
-    };
-
-    const pushResultsChance = () => {
-      type SpotTurn = SpotRoot | SpotChance;
-      const prevSpot = spots.value[selectedSpotIndex.value - 1] as SpotPlayer;
-      const turnSpot = spots.value.find((spot) => spot.player === "turn") as
-        | SpotTurn
-        | undefined;
-
-      const nextActions = treeManager.actions().split("/");
-      if (nextActions[0] === "") nextActions.pop();
-
-      spots.value.push(
-        {
-          type: "chance",
-          index: selectedSpotIndex.value,
-          player: turnSpot ? "river" : "turn",
-          selectedIndex: -1,
-          prevPlayer: prevSpot.player,
-          cards: Array.from({ length: 52 }, (_, i) => ({
-            card: i,
-            isSelected: false,
-            isDead: true,
-          })),
-          pot: config.startingPot + 2 * totalBetAmount.value[0],
-          stack: config.effectiveStack - totalBetAmount.value[0],
-        },
-        {
-          type: "player",
-          index: selectedSpotIndex.value + 1,
-          player: "oop",
-          selectedIndex: -1,
-          actions: nextActions.map((action, i) => {
-            const [name, amount] = action.split(":");
-            return {
-              index: i,
-              name,
-              amount,
-              rate: -1,
-              isSelected: false,
-              color: "#000",
-            };
-          }),
-        }
-      );
-    };
-
-    const pushResultsPlayer = () => {
-      const prevSpot = spots.value[selectedSpotIndex.value - 1];
-      const player = prevSpot.player === "oop" ? "ip" : "oop";
-
-      const actions = treeManager.actions().split("/");
-      if (actions[0] === "") actions.pop();
-
-      spots.value.push({
-        type: "player",
-        index: selectedSpotIndex.value,
-        player,
-        selectedIndex: -1,
-        actions: actions.map((action, i) => {
-          const [name, amount] = action.split(":");
-          return {
-            index: i,
-            name,
-            amount,
-            isSelected: false,
-            color: "#000",
-          };
-        }),
-      });
-    };
-
     const play = (spotIndex: number, actionIndex: number) => {
       const spot = spots.value[spotIndex] as SpotPlayer;
 
@@ -625,23 +626,43 @@ export default defineComponent({
       selectSpot(spotIndex + 1, true, false, true);
     };
 
+    // Applies an edit at the selected node, then rebuilds the spots.
+    const editTree = async (edit: TreeEdit, nextIndex?: number) => {
+      if (loading.value) return;
+      const seq = ++querySeq;
+      loading.value = true;
+      try {
+        const res = await treeApi.query(
+          params,
+          encodeLine(selectedSpotIndex.value),
+          edit
+        );
+        if (seq !== querySeq) return;
+        absorb(res);
+      } catch {
+        if (seq === querySeq) {
+          isTreeError.value = true;
+          loading.value = false;
+        }
+        return;
+      }
+      await selectSpot(
+        nextIndex ?? selectedSpotIndex.value,
+        false,
+        true,
+        nextIndex !== undefined
+      );
+    };
+
     const addBetAction = () => {
       const isRaise = totalBetAmount.value[0] !== totalBetAmount.value[1];
-      treeManager.add_bet_action(betAmount.value, isRaise);
-      selectSpot(selectedSpotIndex.value, false, true, false);
-      addedLines.value = treeManager.added_lines();
-      removedLines.value = treeManager.removed_lines();
-      invalidLines.value = treeManager.invalid_terminals();
+      editTree({ op: "add_bet", amount: betAmount.value, is_raise: isRaise });
     };
 
     const removeSelectedNode = () => {
-      treeManager.remove_current_node();
       let prevIndex = selectedSpotIndex.value - 1;
       if (spots.value[prevIndex].type === "chance") --prevIndex;
-      selectSpot(prevIndex, false, true, true);
-      addedLines.value = treeManager.added_lines();
-      removedLines.value = treeManager.removed_lines();
-      invalidLines.value = treeManager.invalid_terminals();
+      editTree({ op: "remove_node" }, prevIndex);
     };
 
     const saveEdit = () => {
@@ -653,34 +674,21 @@ export default defineComponent({
     };
 
     const deleteAddedLine = (index: number) => {
-      const addedLinesArray = addedLines.value.split(",");
-      const line = addedLinesArray[index];
-
-      treeManager.delete_added_line(line);
-      selectSpot(selectedSpotIndex.value, false, true, false);
-
-      addedLines.value = treeManager.added_lines();
-      removedLines.value = treeManager.removed_lines();
-      invalidLines.value = treeManager.invalid_terminals();
+      const line = addedLines.value.split(",")[index];
+      editTree({ op: "delete_added", line });
     };
 
     const deleteRemovedLine = (index: number) => {
-      const removedLinesArray = removedLines.value.split(",");
-      const line = removedLinesArray[index];
-
-      treeManager.delete_removed_line(line);
-      selectSpot(selectedSpotIndex.value, false, true, false);
-
-      addedLines.value = treeManager.added_lines();
-      removedLines.value = treeManager.removed_lines();
-      invalidLines.value = treeManager.invalid_terminals();
+      const line = removedLines.value.split(",")[index];
+      editTree({ op: "delete_removed", line });
     };
 
-    selectSpot(0, true, false, true);
+    onMounted(() => selectSpot(0, true, false, true));
 
     return {
       navDiv,
       isTreeError,
+      loading,
       spots,
       selectedSpotIndex,
       isSelectedTerminal,

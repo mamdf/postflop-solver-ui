@@ -243,7 +243,7 @@
 import { computed, defineComponent, nextTick, toRefs, ref, watch } from "vue";
 import { useSavedConfigStore } from "../store";
 import { cardText, average, colorString } from "../utils";
-import { handler } from "../global-worker";
+import { handler } from "../api";
 import {
   Results,
   ChanceReports,

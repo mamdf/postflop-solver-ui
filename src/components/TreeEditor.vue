@@ -256,7 +256,7 @@ import { computed, defineComponent, nextTick, ref } from "vue";
 import { useConfigStore } from "../store";
 import { convertBetString, readableLineString } from "../utils";
 import { Spot, SpotRoot, SpotChance, SpotPlayer } from "../result-types";
-import { TreeManager } from "../../pkg/tree/tree";
+import { TreeManager } from "../manager-stubs";
 
 import { CheckIcon } from "@heroicons/vue/20/solid";
 import { TrashIcon } from "@heroicons/vue/24/outline";

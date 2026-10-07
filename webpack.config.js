@@ -46,7 +46,12 @@ module.exports = {
     new MiniCSSExtractPlugin({ filename: "[contenthash].css" }),
     new VueLoaderPlugin(),
   ],
-  experiments: {
-    asyncWebAssembly: true,
+  devServer: {
+    proxy: [
+      {
+        context: ["/game", "/solves", "/info"],
+        target: process.env.API_URL || "http://127.0.0.1:3001",
+      },
+    ],
   },
 };

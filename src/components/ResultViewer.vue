@@ -134,7 +134,7 @@
 <script lang="ts">
 import { computed, defineComponent, ref } from "vue";
 import { useStore } from "../store";
-import { handler } from "../global-worker";
+import { handler } from "../api";
 
 import {
   Results,

@@ -1,5 +1,3 @@
 /dist/
 /node_modules/
-/pkg/
 /public/google*.html
-/rust/**/target/

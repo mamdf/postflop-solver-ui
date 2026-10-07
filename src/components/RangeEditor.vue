@@ -120,7 +120,7 @@
 import { defineComponent, ref } from "vue";
 import { useConfigStore } from "../store";
 import { ranks, rankPat } from "../utils";
-import { RangeManager } from "../../pkg/range/range";
+import { RangeManager } from "../manager-stubs";
 
 import DbItemPicker from "./DbItemPicker.vue";
 

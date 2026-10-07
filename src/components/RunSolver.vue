@@ -1,30 +1,8 @@
 <template>
   <div class="flex my-1 items-center">
-    Number of threads:
-    <input
-      v-model="numThreads"
-      type="number"
-      :class="
-        'w-20 ml-2 px-2 py-1 rounded-lg text-sm text-center ' +
-        (numThreads < 1 ||
-        numThreads > (isSafari ? 1 : 64) ||
-        numThreads % 1 !== 0
-          ? 'input-error'
-          : '')
-      "
-      min="1"
-      max="64"
-    />
     <button
-      class="ml-3 button-base button-blue"
-      :disabled="
-        isTreeBuilding ||
-        store.isSolverRunning ||
-        store.isFinalizing ||
-        numThreads < 1 ||
-        numThreads > (isSafari ? 1 : 64) ||
-        numThreads % 1 !== 0
-      "
+      class="button-base button-blue"
+      :disabled="isTreeBuilding || store.isSolverRunning || store.isFinalizing"
       @click="buildTree"
     >
       Build New Tree
@@ -51,14 +29,14 @@
             other effects.
             <ul class="pl-6 list-disc">
               <li class="mt-1">
-                32-bit FP (floating-point): This is recommended if the memory
-                usage is below the limit (= 3.9GB). It has about 7 significant
-                digits and better performance.
+                32-bit FP (floating-point): This is recommended if enough memory
+                is available. It has about 7 significant digits and better
+                performance.
               </li>
               <li class="mt-1">
-                16-bit integer: This setting can help to avoid the memory limit
-                if the 32-bit FP mode is not usable. Since the significant
-                digits are about 4 digits, it is not suitable for satisfying an
+                16-bit integer: This setting can help to save memory if the
+                32-bit FP mode is not usable. Since the significant digits are
+                about 4 digits, it is not suitable for satisfying an
                 exploitability target below 0.1%. Performance is also worse than
                 in 32-bit FP mode.
               </li>
@@ -85,7 +63,6 @@
             : (memoryUsage / (1024 * 1024)).toFixed(0) + "MB"
         }}
         RAM
-        {{ memoryUsage > maxMemoryUsage ? "(limit exceeded)" : "" }}
       </label>
     </div>
     <div class="ml-2">
@@ -106,11 +83,7 @@
             : (memoryUsageCompressed / (1024 * 1024)).toFixed(0) + "MB"
         }}
         RAM
-        {{ memoryUsageCompressed > maxMemoryUsage ? "(limit exceeded)" : "" }}
       </label>
-    </div>
-    <div v-if="memoryUsage > maxMemoryUsage" class="mt-1.5">
-      RAM limit: 3.9GB (= 4GB Wasm limit - 0.1GB margin)
     </div>
 
     <div class="mt-4">
@@ -187,7 +160,6 @@
         class="button-base button-blue"
         :disabled="
           store.hasSolverRun ||
-          memoryUsageSelected > maxMemoryUsage ||
           targetExploitability <= 0 ||
           maxIterations < 0 ||
           maxIterations % 1 !== 0 ||
@@ -200,7 +172,7 @@
       <button
         class="button-base button-red"
         :disabled="!store.isSolverRunning"
-        @click="() => (terminateFlag = true)"
+        @click="stopSolver"
       >
         Stop
       </button>
@@ -208,7 +180,7 @@
         v-if="!store.isSolverPaused"
         class="button-base button-green"
         :disabled="!store.isSolverRunning"
-        @click="() => (pauseFlag = true)"
+        @click="pauseSolver"
       >
         Pause
       </button>
@@ -244,6 +216,10 @@
         }}
       </div>
       {{ iterationText }}
+      <br v-if="queueMs > 50" />
+      <span v-if="queueMs > 50">
+        Waited {{ (queueMs / 1000).toFixed(1) }}s for a solver slot
+      </span>
       <br />
       {{ exploitabilityText }}
       <br />
@@ -254,7 +230,7 @@
 
 <script lang="ts">
 import { computed, defineComponent, ref } from "vue";
-import { init, handler } from "../global-worker";
+import { handler } from "../api";
 import {
   useStore,
   useConfigStore,
@@ -269,14 +245,9 @@ import {
   INVALID_LINE_STRING,
   readableLineString,
 } from "../utils";
-import { detect } from "detect-browser";
 
 import { Tippy } from "vue-tippy";
 import { QuestionMarkCircleIcon } from "@heroicons/vue/20/solid";
-
-const maxMemoryUsage = 3.9 * 1024 * 1024 * 1024; // 3.9 GB
-const browser = detect();
-const isSafari = browser && (browser.name === "safari" || browser.os === "iOS");
 
 const checkConfig = (
   config: ReturnType<typeof useConfigStore>
@@ -402,13 +373,12 @@ export default defineComponent({
     const config = useConfigStore();
     const tmpConfig = useTmpConfigStore();
 
-    const numThreads = ref((!isSafari && navigator.hardwareConcurrency) || 1);
     const targetExploitability = ref(0.3);
     const maxIterations = ref(1000);
 
     const isTreeBuilding = ref(false);
     const isTreeBuilt = ref(false);
-    const treeStatus = ref("Module not loaded");
+    const treeStatus = ref("No tree built");
     const memoryUsage = ref(0);
     const memoryUsageCompressed = ref(0);
     const isCompressionEnabled = ref(false);
@@ -417,17 +387,12 @@ export default defineComponent({
     const currentIteration = ref(-1);
     const exploitability = ref(Number.POSITIVE_INFINITY);
     const elapsedTimeMs = ref(-1);
+    const queueMs = ref(0);
 
     let startTime = 0;
-    let exploitabilityUpdated = false;
-
-    const memoryUsageSelected = computed(() => {
-      if (isCompressionEnabled.value) {
-        return memoryUsageCompressed.value;
-      } else {
-        return memoryUsage.value;
-      }
-    });
+    // target (in the game's EV units) as computed by the server for this percentage
+    let serverTarget = 0;
+    let serverTargetPct = 0;
 
     const iterationText = computed(() => {
       if (currentIteration.value === -1) {
@@ -471,9 +436,6 @@ export default defineComponent({
       store.isSolverFinished = false;
       treeStatus.value = "Building tree...";
 
-      await init(numThreads.value);
-      if (!handler) return;
-
       const errorString = await handler.init(
         tmpConfig.rangeRaw[0],
         tmpConfig.rangeRaw[1],
@@ -501,7 +463,9 @@ export default defineComponent({
         tmpConfig.forceAllInThreshold / 100,
         tmpConfig.mergingThreshold / 100,
         tmpConfig.addedLines,
-        tmpConfig.removedLines
+        tmpConfig.removedLines,
+        undefined,
+        targetExploitability.value > 0 ? targetExploitability.value : undefined
       );
 
       if (errorString) {
@@ -515,16 +479,11 @@ export default defineComponent({
       memoryUsage.value = await handler.memoryUsage(false);
       memoryUsageCompressed.value = await handler.memoryUsage(true);
 
-      if (
-        memoryUsage.value > maxMemoryUsage &&
-        memoryUsageCompressed.value <= maxMemoryUsage
-      ) {
-        isCompressionEnabled.value = true;
-      }
+      serverTarget = handler.info.targetExploitability;
+      serverTargetPct = targetExploitability.value;
 
-      const threadText = `${numThreads.value} thread${
-        numThreads.value === 1 ? "" : "s"
-      }`;
+      const { threads } = handler.info;
+      const threadText = `${threads} thread${threads === 1 ? "" : "s"}`;
 
       isTreeBuilding.value = false;
       isTreeBuilt.value = true;
@@ -532,30 +491,42 @@ export default defineComponent({
     };
 
     const runSolver = async () => {
-      if (!handler) return;
-
       terminateFlag.value = false;
       pauseFlag.value = false;
       currentIteration.value = -1;
       exploitability.value = Number.POSITIVE_INFINITY;
       elapsedTimeMs.value = -1;
+      queueMs.value = 0;
 
       store.isSolverRunning = true;
 
       startTime = performance.now();
 
-      await handler.allocateMemory(isCompressionEnabled.value);
+      try {
+        await handler.allocateMemory(isCompressionEnabled.value);
 
-      currentIteration.value = 0;
-      exploitability.value = Math.max(await handler.exploitability(), 0);
-      exploitabilityUpdated = true;
+        currentIteration.value = 0;
+        exploitability.value = Math.max(await handler.exploitability(), 0);
+      } catch (e) {
+        store.isSolverRunning = false;
+        treeStatus.value = `Error: ${e instanceof Error ? e.message : e}`;
+        return;
+      }
 
       await resumeSolver();
     };
 
-    const resumeSolver = async () => {
-      if (!handler) return;
+    const stopSolver = () => {
+      terminateFlag.value = true;
+      handler.stop().catch(() => {});
+    };
 
+    const pauseSolver = () => {
+      pauseFlag.value = true;
+      handler.stop().catch(() => {});
+    };
+
+    const resumeSolver = async () => {
       store.isSolverRunning = true;
       store.isSolverPaused = false;
 
@@ -563,7 +534,11 @@ export default defineComponent({
         startTime = performance.now();
       }
 
-      const target = (config.startingPot * targetExploitability.value) / 100;
+      // the server target is for the percentage sent at build time; rescale it
+      const target =
+        serverTarget > 0 && serverTargetPct > 0
+          ? (serverTarget * targetExploitability.value) / serverTargetPct
+          : (config.startingPot * targetExploitability.value) / 100;
 
       while (
         !terminateFlag.value &&
@@ -580,24 +555,25 @@ export default defineComponent({
           return;
         }
 
-        await handler.iterate(currentIteration.value);
-        ++currentIteration.value;
-        exploitabilityUpdated = false;
-
-        if (currentIteration.value % 10 === 0) {
-          exploitability.value = Math.max(await handler.exploitability(), 0);
-          exploitabilityUpdated = true;
-        }
-      }
-
-      if (!exploitabilityUpdated) {
-        exploitability.value = Math.max(await handler.exploitability(), 0);
+        const res = await handler.iterate(
+          currentIteration.value,
+          Math.min(10, maxIterations.value - currentIteration.value)
+        );
+        currentIteration.value = res.iterationsDone;
+        queueMs.value = res.queueMs;
+        exploitability.value = Math.max(res.exploitability, 0);
       }
 
       store.isSolverRunning = false;
       store.isFinalizing = true;
 
-      await handler.finalize();
+      try {
+        await handler.finalize();
+      } catch (e) {
+        store.isFinalizing = false;
+        treeStatus.value = `Error: ${e instanceof Error ? e.message : e}`;
+        return;
+      }
 
       store.isFinalizing = false;
       store.isSolverFinished = true;
@@ -608,25 +584,24 @@ export default defineComponent({
 
     return {
       store,
-      numThreads,
-      isSafari,
       targetExploitability,
       maxIterations,
       isTreeBuilding,
       isTreeBuilt,
       treeStatus,
-      maxMemoryUsage,
       memoryUsage,
       memoryUsageCompressed,
       isCompressionEnabled,
       terminateFlag,
       pauseFlag,
-      memoryUsageSelected,
       iterationText,
       exploitabilityText,
       timeText,
       buildTree,
       runSolver,
+      queueMs,
+      stopSolver,
+      pauseSolver,
       resumeSolver,
     };
   },

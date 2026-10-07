@@ -161,9 +161,12 @@ export default defineComponent({
         rangeApi.update({ text: req.ranges.ip }),
       ]);
       [oop, ip].forEach((r, i) => {
-        config.range[i] = r.weights;
+        // in place: the mounted RangeEditors hold references to these arrays
+        r.weights.forEach((w, j) => (config.range[i][j] = w * 100));
         config.rangeRaw[i].set(r.raw);
+        config.rangeLoadText[i] = r.text;
       });
+      config.rangeEpoch++;
 
       const { tree } = req;
       config.board = [

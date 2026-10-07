@@ -117,7 +117,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, onBeforeUnmount, ref } from "vue";
+import { defineComponent, onBeforeUnmount, ref, watch } from "vue";
 import { useConfigStore } from "../store";
 import { ranks, rankPat } from "../utils";
 import { rangeApi, RangeOp } from "../api";
@@ -319,6 +319,20 @@ export default defineComponent({
       rangeText.value = String(rangeStr);
       onRangeTextChange();
     };
+
+    // ranges replaced from outside (loaded solve): drop pending edits and resync
+    watch(
+      () => config.rangeEpoch,
+      () => {
+        clearTimeout(timer);
+        ops = [];
+        ++seq;
+        baseRaw = Array.from(rangeStoreRaw);
+        rangeText.value = config.rangeLoadText[props.player];
+        rangeTextError.value = "";
+        updateNumCombos();
+      }
+    );
 
     onBeforeUnmount(flush);
 

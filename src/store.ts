@@ -130,6 +130,10 @@ export const useStore = defineStore("app", {
 
 export const useConfigStore = defineStore("config", {
   state: () => ({
+    // Bumped when ranges are replaced from outside the editors (loaded solve); the
+    // editors then resync their local state from rangeRaw / rangeLoadText.
+    rangeEpoch: 0,
+    rangeLoadText: ["", ""],
     range: [
       Array.from({ length: 13 * 13 }, () => 0),
       Array.from({ length: 13 * 13 }, () => 0),

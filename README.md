@@ -6,11 +6,11 @@ Fork of [b-inary/wasm-postflop](https://github.com/b-inary/wasm-postflop) (AGPL-
 ## Development
 
 ```sh
-npm install
-npm run dev        # proxies /game, /solves, /info to the API
+just setup
+just dev           # http://127.0.0.1:5174 (PORT=...), proxies /game, /solves, /info to the API
 ```
 
-The API must be running at `127.0.0.1:3001` (override with `API_URL=http://host:port npm run dev`).
+`just dev` does not start the API: it must already be running at `127.0.0.1:3001` (override with `API_URL=http://host:port just dev`).
 
 ## Production
 

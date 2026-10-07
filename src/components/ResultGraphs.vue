@@ -75,6 +75,7 @@ import {
 } from "chart.js";
 
 import { Line as LineChart } from "vue-chartjs";
+import { useStore } from "../store";
 import ResultTable from "./ResultTable.vue";
 
 Chart.register(
@@ -129,6 +130,7 @@ export default defineComponent({
   },
 
   setup(props) {
+    const store = useStore();
     const chartWidth = ref(0);
     const tableScrollTarget = ref<number | null>(null);
 
@@ -292,7 +294,7 @@ export default defineComponent({
           y: {
             min: content === "eq" ? 0 : undefined,
             max: content === "eq" ? 1 : undefined,
-            suggestedMin: content === "ev" ? 0 : undefined,
+            suggestedMin: content === "ev" && !store.isIcm ? 0 : undefined,
             ticks: {
               format: formatY,
             },

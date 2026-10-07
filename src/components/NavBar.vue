@@ -4,7 +4,7 @@
   >
     <div class="flex relative w-full">
       <div class="flex items-center z-10">
-        <span class="px-4 text-lg font-semibold">WASM Postflop</span>
+        <span class="px-4 text-lg font-semibold">Postflop Solver UI</span>
       </div>
 
       <div class="flex ml-auto h-full items-center z-10">

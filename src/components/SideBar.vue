@@ -43,11 +43,22 @@
       Tree Configuration
     </button>
 
+    <button :class="itemStyle('icm')" @click="store.sideView = 'icm'">
+      ICM
+    </button>
+
     <button
       :class="itemStyle('run-solver')"
       @click="store.sideView = 'run-solver'"
     >
       Run Solver
+    </button>
+
+    <button
+      :class="itemStyle('saved-solves')"
+      @click="store.sideView = 'saved-solves'"
+    >
+      Saved Solves
     </button>
   </aside>
 </template>

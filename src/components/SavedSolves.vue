@@ -1,0 +1,253 @@
+<template>
+  <div class="flex items-center my-1 gap-3">
+    <input
+      v-model="memo"
+      type="text"
+      placeholder="Memo (optional)"
+      class="w-64 px-2 py-1 rounded-lg text-sm"
+    />
+    <button
+      class="button-base button-blue"
+      :disabled="!store.isSolverFinished || busy"
+      @click="save"
+    >
+      Save Current Solve
+    </button>
+    <button class="button-base button-blue" :disabled="busy" @click="refresh">
+      Refresh
+    </button>
+  </div>
+  <div v-if="!store.isSolverFinished" class="text-sm text-gray-600">
+    Run the solver to completion to enable saving.
+  </div>
+
+  <div v-if="message" class="my-3">{{ message }}</div>
+
+  <table v-if="solves.length > 0" class="mt-4 text-sm">
+    <thead>
+      <tr class="text-left">
+        <th class="pr-4">Board</th>
+        <th class="pr-4">Iterations</th>
+        <th class="pr-4">Exploitability</th>
+        <th class="pr-4">EV unit</th>
+        <th class="pr-4">Saved</th>
+        <th class="pr-4">Memo</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="s in solves" :key="s.id">
+        <td class="pr-4 font-semibold">{{ boardText(s) }}</td>
+        <td class="pr-4">{{ s.num_iterations }}</td>
+        <td class="pr-4">{{ s.final_exploitability.toFixed(3) }}</td>
+        <td class="pr-4">{{ s.ev_unit }}</td>
+        <td class="pr-4">{{ new Date(s.created_at_ms).toLocaleString() }}</td>
+        <td class="pr-4">{{ s.memo }}</td>
+        <td class="whitespace-nowrap">
+          <button
+            class="button-base button-blue mr-2"
+            :disabled="busy || store.isSolverRunning || store.isFinalizing"
+            @click="load(s.id)"
+          >
+            Load
+          </button>
+          <button
+            class="button-base button-red"
+            :disabled="busy"
+            @click="remove(s.id)"
+          >
+            Delete
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <div v-else class="mt-4 text-gray-600">No saved solves.</div>
+</template>
+
+<script lang="ts">
+import { defineComponent, nextTick, onMounted, ref } from "vue";
+import { rangeApi, solvesApi, SolveRecord } from "../api";
+import { evSettingsFromRequest } from "../ev-model";
+import { useStore, useConfigStore, saveConfig, saveConfigTmp } from "../store";
+import { parseCardString } from "../utils";
+
+// Subset of the API's SolveRequest that is mapped back onto the config.
+type StreetRequest = {
+  oop: { bet: string; raise: string };
+  ip: { bet: string; raise: string };
+  oop_donk?: string | null;
+};
+
+type LoadedRequest = {
+  ranges: { oop: string; ip: string };
+  board: { flop: string; turn?: string | null; river?: string | null };
+  tree: {
+    starting_pot: number;
+    effective_stack: number;
+    rake_rate: number;
+    rake_cap: number;
+    flop: StreetRequest;
+    turn: StreetRequest;
+    river: StreetRequest;
+    add_allin_threshold: number;
+    force_allin_threshold: number;
+    merging_threshold: number;
+  };
+  ev_model?: Parameters<typeof evSettingsFromRequest>[0];
+};
+
+const cards = (s: string | null | undefined) =>
+  (s ?? "").match(/../g)?.map((c) => parseCardString(c) ?? -1) ?? [];
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+// The server answers 404 when the game was closed or expired.
+const isNotFound = (e: unknown) => /not found|unknown|404/i.test(errorText(e));
+
+export default defineComponent({
+  setup() {
+    const store = useStore();
+    const config = useConfigStore();
+
+    const solves = ref<SolveRecord[]>([]);
+    const memo = ref("");
+    const message = ref("");
+    const busy = ref(false);
+
+    const boardText = (s: SolveRecord) =>
+      [s.board.flop, s.board.turn, s.board.river].filter(Boolean).join(" ");
+
+    const refresh = async () => {
+      try {
+        solves.value = await solvesApi.list();
+      } catch (e) {
+        message.value = `Error: ${errorText(e)}`;
+      }
+    };
+
+    const save = async () => {
+      busy.value = true;
+      try {
+        const res = await solvesApi.save(memo.value);
+        message.value = res.deduplicated
+          ? "This solve was already saved."
+          : "Solve saved.";
+        memo.value = "";
+        await refresh();
+      } catch (e) {
+        message.value = isNotFound(e)
+          ? "The game has expired on the server. Please re-solve."
+          : `Error: ${errorText(e)}`;
+      }
+      busy.value = false;
+    };
+
+    const remove = async (id: number) => {
+      busy.value = true;
+      try {
+        await solvesApi.remove(id);
+        await refresh();
+      } catch (e) {
+        message.value = `Error: ${errorText(e)}`;
+      }
+      busy.value = false;
+    };
+
+    // Fills the config (and then the tmp/saved copies) from a loaded request.
+    const applyRequest = async (req: LoadedRequest) => {
+      const [oop, ip] = await Promise.all([
+        rangeApi.update({ text: req.ranges.oop }),
+        rangeApi.update({ text: req.ranges.ip }),
+      ]);
+      [oop, ip].forEach((r, i) => {
+        config.range[i] = r.weights;
+        config.rangeRaw[i].set(r.raw);
+      });
+
+      const { tree } = req;
+      config.board = [
+        ...cards(req.board.flop),
+        ...cards(req.board.turn),
+        ...cards(req.board.river),
+      ];
+      config.startingPot = tree.starting_pot;
+      config.effectiveStack = tree.effective_stack;
+      config.rakePercent = Math.round(tree.rake_rate * 1e6) / 1e4;
+      config.rakeCap = tree.rake_cap;
+      config.donkOption = !!(tree.turn.oop_donk || tree.river.oop_donk);
+      config.oopFlopBet = tree.flop.oop.bet;
+      config.oopFlopRaise = tree.flop.oop.raise;
+      config.oopTurnBet = tree.turn.oop.bet;
+      config.oopTurnRaise = tree.turn.oop.raise;
+      config.oopTurnDonk = tree.turn.oop_donk ?? "";
+      config.oopRiverBet = tree.river.oop.bet;
+      config.oopRiverRaise = tree.river.oop.raise;
+      config.oopRiverDonk = tree.river.oop_donk ?? "";
+      config.ipFlopBet = tree.flop.ip.bet;
+      config.ipFlopRaise = tree.flop.ip.raise;
+      config.ipTurnBet = tree.turn.ip.bet;
+      config.ipTurnRaise = tree.turn.ip.raise;
+      config.ipRiverBet = tree.river.ip.bet;
+      config.ipRiverRaise = tree.river.ip.raise;
+      config.addAllInThreshold =
+        Math.round(tree.add_allin_threshold * 1e6) / 1e4;
+      config.forceAllInThreshold =
+        Math.round(tree.force_allin_threshold * 1e6) / 1e4;
+      config.mergingThreshold = Math.round(tree.merging_threshold * 1e6) / 1e4;
+      // tree edits are not part of a saved solve
+      config.expectedBoardLength = 0;
+      config.addedLines = "";
+      config.removedLines = "";
+      config.evModel = evSettingsFromRequest(req.ev_model);
+
+      saveConfigTmp();
+      saveConfig();
+    };
+
+    const load = async (id: number) => {
+      busy.value = true;
+      message.value = "Loading...";
+      try {
+        const res = await solvesApi.load(id);
+        // force the result viewer to re-initialize on the new game
+        store.isSolverFinished = false;
+        await nextTick();
+        store.isSolverPaused = false;
+        store.evUnit = res.ev_unit;
+        try {
+          await applyRequest(res.request as LoadedRequest);
+        } catch (e) {
+          message.value = `Loaded, but the configuration could not be restored: ${errorText(
+            e
+          )}`;
+        }
+        store.isSolverFinished = true;
+        if (message.value === "Loading...") {
+          message.value = "Loaded. Open the Results tab to browse the solve.";
+        }
+      } catch (e) {
+        message.value = isNotFound(e)
+          ? "Solve not found on the server. Please re-solve."
+          : `Error: ${errorText(e)}`;
+      }
+      busy.value = false;
+    };
+
+    onMounted(refresh);
+
+    return {
+      store,
+      solves,
+      memo,
+      message,
+      busy,
+      boardText,
+      refresh,
+      save,
+      load,
+      remove,
+    };
+  },
+});
+</script>

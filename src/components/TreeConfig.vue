@@ -744,6 +744,8 @@ import {
   readableLineString,
 } from "../utils";
 
+import { EvSettings, defaultEvSettings } from "../ev-model";
+
 import DbItemPicker from "./DbItemPicker.vue";
 import TreeEditor from "./TreeEditor.vue";
 import { Tippy } from "vue-tippy";
@@ -775,6 +777,7 @@ type ConfigValue = {
   expectedBoardLength: number;
   addedLines: string;
   removedLines: string;
+  evModel?: EvSettings;
 };
 
 export default defineComponent({
@@ -964,6 +967,7 @@ export default defineComponent({
       config.expectedBoardLength = 0;
       config.addedLines = "";
       config.removedLines = "";
+      config.evModel = defaultEvSettings();
     };
 
     const oopToIp = () => {
@@ -1011,6 +1015,7 @@ export default defineComponent({
         expectedBoardLength: config.expectedBoardLength,
         addedLines: config.addedLines,
         removedLines: config.removedLines,
+        evModel: { ...config.evModel },
       })
     );
 
@@ -1027,6 +1032,7 @@ export default defineComponent({
       config.expectedBoardLength = Number(configValue.expectedBoardLength);
       config.addedLines = String(configValue.addedLines);
       config.removedLines = String(configValue.removedLines);
+      config.evModel = { ...defaultEvSettings(), ...configValue.evModel };
 
       const betMembers = [
         "oopFlopBet",

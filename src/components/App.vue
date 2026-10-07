@@ -39,8 +39,14 @@
         <div v-show="store.sideView === 'tree-config'">
           <TreeConfig />
         </div>
+        <div v-show="store.sideView === 'icm'">
+          <IcmPanel />
+        </div>
         <div v-show="store.sideView === 'run-solver'">
           <RunSolver />
+        </div>
+        <div v-show="store.sideView === 'saved-solves'">
+          <SavedSolves />
         </div>
       </div>
     </div>
@@ -65,7 +71,9 @@ import AboutPage from "./AboutPage.vue";
 import RangeEditor from "./RangeEditor.vue";
 import BoardSelector from "./BoardSelector.vue";
 import TreeConfig from "./TreeConfig.vue";
+import IcmPanel from "./IcmPanel.vue";
 import RunSolver from "./RunSolver.vue";
+import SavedSolves from "./SavedSolves.vue";
 import ResultViewer from "./ResultViewer.vue";
 
 export default defineComponent({
@@ -76,7 +84,9 @@ export default defineComponent({
     RangeEditor,
     BoardSelector,
     TreeConfig,
+    IcmPanel,
     RunSolver,
+    SavedSolves,
     ResultViewer,
   },
 

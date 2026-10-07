@@ -1,4 +1,5 @@
 import { MAX_AMOUNT, sanitizeBetString } from "./utils";
+import { defaultEvSettings } from "./ev-model";
 
 export type ConfigValue1 = {
   startingPot: number;
@@ -20,7 +21,7 @@ export type ConfigValue1 = {
   adjustLastTwoBetSizes: number;
 };
 
-type ConfigValue2 = {
+export type ConfigValue2 = {
   startingPot: number;
   effectiveStack: number;
   rakePercent: number;
@@ -81,4 +82,9 @@ export const migrateConfig1to2 = (value: ConfigValue1): ConfigValue2 => {
     addedLines: "",
     removedLines: "",
   };
+};
+
+// v3 adds the EV model (chip EV by default)
+export const migrateConfig2to3 = (value: ConfigValue2) => {
+  return { ...value, evModel: defaultEvSettings() };
 };

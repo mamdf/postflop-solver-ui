@@ -231,6 +231,7 @@
 <script lang="ts">
 import { computed, defineComponent, ref } from "vue";
 import { handler } from "../api";
+import { evModelRequest, evSettingsErrors } from "../ev-model";
 import {
   useStore,
   useConfigStore,
@@ -308,6 +309,11 @@ const checkConfig = (
     if (!config.oopRiverDonkSanitized.valid) {
       return `OOP river donk: ${config.oopRiverDonkSanitized.s}`;
     }
+  }
+
+  const evErrors = evSettingsErrors(config.evModel, config.rakePercent);
+  if (evErrors.length > 0) {
+    return `ICM: ${evErrors[0]}`;
   }
 
   if (config.addAllInThreshold < 0) {
@@ -464,7 +470,7 @@ export default defineComponent({
         tmpConfig.mergingThreshold / 100,
         tmpConfig.addedLines,
         tmpConfig.removedLines,
-        undefined,
+        evModelRequest(tmpConfig.evModel),
         targetExploitability.value > 0 ? targetExploitability.value : undefined
       );
 
@@ -475,6 +481,7 @@ export default defineComponent({
       }
 
       saveConfig();
+      store.evUnit = handler.info.evUnit;
 
       memoryUsage.value = await handler.memoryUsage(false);
       memoryUsageCompressed.value = await handler.memoryUsage(true);

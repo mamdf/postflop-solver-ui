@@ -72,6 +72,7 @@ import {
   Tooltip,
 } from "chart.js";
 
+import { useStore } from "../store";
 import BoardSelectorCard from "./BoardSelectorCard.vue";
 import ResultTable from "./ResultTable.vue";
 import { Bar } from "vue-chartjs";
@@ -132,6 +133,7 @@ export default defineComponent({
   },
 
   setup(props, context) {
+    const store = useStore();
     const chartParentDiv = ref<HTMLDivElement | null>(null);
     const chartParentDivHeight = ref(0);
 
@@ -228,7 +230,7 @@ export default defineComponent({
           "strategy-combos": "Strategy (Combos)",
           strategy: "Strategy",
           eq: "Equity",
-          ev: "EV",
+          ev: store.evLabel,
           eqr: "EQR",
         }[option];
 

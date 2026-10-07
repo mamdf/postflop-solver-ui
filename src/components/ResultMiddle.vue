@@ -105,17 +105,17 @@
         <div class="text-sm">Display:</div>
         <select
           v-model="strategyContentPair"
-          class="w-[8.75rem] px-1 py-0.5 border-gray-600 bg-gray-200 rounded-lg shadow cursor-pointer bg-right"
+          class="w-40 px-1 py-0.5 border-gray-600 bg-gray-200 rounded-lg shadow cursor-pointer bg-right"
           @change="updateDisplayOptions"
         >
           <option value="show,default">Strategy</option>
           <option value="show,eq">Strategy + EQ</option>
-          <option value="show,ev">Strategy + EV</option>
-          <option value="show,eqr">Strategy + EQR</option>
+          <option value="show,ev">Strategy + {{ store.evLabel }}</option>
+          <option v-if="!store.isIcm" value="show,eqr">Strategy + EQR</option>
           <option value="none,default">Weight</option>
           <option value="none,eq">EQ</option>
-          <option value="none,ev">EV</option>
-          <option value="none,eqr">EQR</option>
+          <option value="none,ev">{{ store.evLabel }}</option>
+          <option v-if="!store.isIcm" value="none,eqr">EQR</option>
         </select>
       </div>
 
@@ -126,12 +126,12 @@
         <div class="text-sm">Display:</div>
         <select
           v-model="displayOptions.contentGraphs"
-          class="w-20 px-1 py-0.5 border-gray-600 bg-gray-200 rounded-lg shadow cursor-pointer bg-right"
+          class="w-28 px-1 py-0.5 border-gray-600 bg-gray-200 rounded-lg shadow cursor-pointer bg-right"
           @change="updateDisplayOptions"
         >
           <option value="eq">EQ</option>
-          <option value="ev">EV</option>
-          <option value="eqr">EQR</option>
+          <option value="ev">{{ store.evLabel }}</option>
+          <option v-if="!store.isIcm" value="eqr">EQR</option>
         </select>
       </div>
 
@@ -148,8 +148,8 @@
           <option value="strategy-combos">Strategy (Combos)</option>
           <option value="strategy">Strategy (%)</option>
           <option value="eq">Equity</option>
-          <option value="ev">EV</option>
-          <option value="eqr">EQR</option>
+          <option value="ev">{{ store.evLabel }}</option>
+          <option v-if="!store.isIcm" value="eqr">EQR</option>
         </select>
       </div>
 
@@ -195,6 +195,7 @@
 <script lang="ts">
 import { defineComponent, reactive, ref, toRefs, watch } from "vue";
 import { capitalize } from "../utils";
+import { useStore } from "../store";
 import * as Types from "../result-types";
 
 // import { Tippy } from "vue-tippy";
@@ -243,6 +244,7 @@ export default defineComponent({
   },
 
   setup(props, context) {
+    const store = useStore();
     const { chanceMode } = toRefs(props);
     let displayModeOld = "basics" as Types.DisplayMode;
 
@@ -300,6 +302,26 @@ export default defineComponent({
       context.emit("update:display-options", displayOptions);
     }
 
+    // EQR is meaningless for ICM models: fall back to the default content
+    watch(
+      () => store.isIcm,
+      (isIcm) => {
+        if (!isIcm) return;
+        if (displayOptions.contentBasics === "eqr") {
+          displayOptions.contentBasics = "default";
+          strategyContentPair.value = displayOptions.strategy + ",default";
+        }
+        if (displayOptions.contentGraphs === "eqr") {
+          displayOptions.contentGraphs = "eq";
+        }
+        if (displayOptions.chartChance === "eqr") {
+          displayOptions.chartChance = "strategy-combos";
+        }
+        context.emit("update:display-options", displayOptions);
+      },
+      { immediate: true }
+    );
+
     const updateDisplayMode = (displayMode: Types.DisplayMode) => {
       if (displayMode !== "chance") {
         displayModeOld = displayMode;
@@ -325,6 +347,7 @@ export default defineComponent({
     // };
 
     return {
+      store,
       capitalize,
       displayOptions,
       strategyContentPair,

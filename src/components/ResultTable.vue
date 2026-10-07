@@ -32,7 +32,7 @@
             @change="updateDisplayOptions"
           >
             <option value="percentage">Action %</option>
-            <option value="ev">Action EV</option>
+            <option value="ev">Action {{ store.evLabel }}</option>
           </select>
         </div>
 
@@ -371,6 +371,8 @@ import {
   TableMode,
 } from "../result-types";
 
+import { useStore } from "../store";
+
 import { Tippy } from "vue-tippy";
 import { ArrowTopRightOnSquareIcon } from "@heroicons/vue/24/solid";
 
@@ -519,6 +521,8 @@ export default defineComponent({
   },
 
   setup(props) {
+    const store = useStore();
+
     const displayOptions =
       props.tableMode !== "chance"
         ? reactive<DisplayOptionsBasics>({
@@ -679,8 +683,10 @@ export default defineComponent({
 
         ret.push({ label: "Weight", type: "weight" });
         ret.push({ label: "EQ", type: "percentage", index: INDEX_EQUITY });
-        ret.push({ label: "EV", type: "ev" });
-        ret.push({ label: "EQR", type: "percentage", index: INDEX_EQR });
+        ret.push({ label: store.evLabel, type: "ev" });
+        if (!store.isIcm) {
+          ret.push({ label: "EQR", type: "percentage", index: INDEX_EQR });
+        }
 
         const options = displayOptions as DisplayOptionsBasics;
 
@@ -709,8 +715,10 @@ export default defineComponent({
 
         ret.push({ label: "Combos", type: "weight" });
         ret.push({ label: "EQ", type: "percentage", index: INDEX_EQUITY });
-        ret.push({ label: "EV", type: "ev" });
-        ret.push({ label: "EQR", type: "percentage", index: INDEX_EQR });
+        ret.push({ label: store.evLabel, type: "ev" });
+        if (!store.isIcm) {
+          ret.push({ label: "EQR", type: "percentage", index: INDEX_EQR });
+        }
 
         if (numActions.value > 0) {
           const spot = props.selectedSpot as SpotPlayer;
@@ -1000,7 +1008,8 @@ export default defineComponent({
         const ary = ["Hand", "Weight", "Combos"];
 
         if (!props.results.isEmpty) {
-          ary.push("Equity", "EV", "EQR");
+          ary.push("Equity", store.evLabel);
+          if (!store.isIcm) ary.push("EQR");
         }
 
         if (numActions.value > 0) {
@@ -1009,7 +1018,7 @@ export default defineComponent({
             const action = actions[i];
             const amount = action.amount === "0" ? "" : ` ${action.amount}`;
             ary.push(`${action.name}${amount} %`);
-            ary.push(`${action.name}${amount} EV`);
+            ary.push(`${action.name}${amount} ${store.evLabel}`);
           }
         }
 
@@ -1023,18 +1032,23 @@ export default defineComponent({
           const card1 = row[0] & 0xff;
           const card2 = row[0] >>> 8;
           const pairStr = cardStr(card2) + cardStr(card1);
+          const tail = row.slice(startIndex);
+          if (store.isIcm && startIndex === INDEX_EQUITY) {
+            tail.splice(INDEX_EQR - INDEX_EQUITY, 1); // drop EQR
+          }
           const ary = [
             pairStr,
             row[INDEX_WEIGHT],
             row[INDEX_NORMALIZER],
-            ...row.slice(startIndex),
+            ...tail,
           ];
           data.push(ary.join(","));
         }
       } else {
         if (!props.chanceReports) return;
 
-        const ary = [columns.value[0].label, "Combos", "Equity", "EV", "EQR"];
+        const ary = [columns.value[0].label, "Combos", "Equity", store.evLabel];
+        if (!store.isIcm) ary.push("EQR");
 
         if (numActions.value > 0) {
           const actions = (props.selectedSpot as SpotPlayer).actions;
@@ -1053,7 +1067,9 @@ export default defineComponent({
             row[INDEX_WEIGHT],
             isNaN(row[INDEX_EQUITY]) ? "-" : row[INDEX_EQUITY],
             isNaN(row[INDEX_EV]) ? "-" : row[INDEX_EV],
-            isNaN(row[INDEX_EQR]) ? "-" : row[INDEX_EQR],
+            ...(store.isIcm
+              ? []
+              : [isNaN(row[INDEX_EQR]) ? "-" : row[INDEX_EQR]]),
             ...row.slice(INDEX_STRATEGY_BASE).filter((_, i) => i % 2 === 0),
           ];
           data.push(ary.join(","));
@@ -1066,6 +1082,7 @@ export default defineComponent({
     };
 
     return {
+      store,
       toFixed1,
       toFixed,
       toFixedAdaptive,

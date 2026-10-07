@@ -1,5 +1,10 @@
 import Dexie, { Table } from "dexie";
-import { ConfigValue1, migrateConfig1to2 } from "./db-migration";
+import {
+  ConfigValue1,
+  ConfigValue2,
+  migrateConfig1to2,
+  migrateConfig2to3,
+} from "./db-migration";
 
 export type DbItem = {
   id?: number;
@@ -44,6 +49,22 @@ class WASMPostflopDB extends Dexie {
           .modify((item: DbItem | DbGroup) => {
             if (!item.isGroup) {
               item.value = migrateConfig1to2(item.value as ConfigValue1);
+            }
+          });
+      });
+
+    this.version(3)
+      .stores({
+        ranges: "++id, [name0+name1+name2+name3+isGroup]",
+        configurations: "++id, [name0+name1+name2+name3+isGroup]",
+      })
+      .upgrade((tx) => {
+        return tx
+          .table("configurations")
+          .toCollection()
+          .modify((item: DbItem | DbGroup) => {
+            if (!item.isGroup) {
+              item.value = migrateConfig2to3(item.value as ConfigValue2);
             }
           });
       });

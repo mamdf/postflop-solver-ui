@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { sanitizeBetString } from "./utils";
+import { defaultEvSettings } from "./ev-model";
 
 export type NavView = "solver" | "results";
 
@@ -9,7 +10,9 @@ export type SideView =
   | "ip-range"
   | "board"
   | "tree-config"
-  | "run-solver";
+  | "icm"
+  | "run-solver"
+  | "saved-solves";
 
 export const saveConfigTmp = () => {
   const config = useConfigStore();
@@ -45,6 +48,7 @@ export const saveConfigTmp = () => {
     expectedBoardLength: config.expectedBoardLength,
     addedLines: config.addedLines,
     removedLines: config.removedLines,
+    evModel: { ...config.evModel },
   });
 };
 
@@ -82,6 +86,7 @@ export const saveConfig = () => {
     expectedBoardLength: tmpConfig.expectedBoardLength,
     addedLines: tmpConfig.addedLines,
     removedLines: tmpConfig.removedLines,
+    evModel: { ...tmpConfig.evModel },
   });
 };
 
@@ -90,17 +95,21 @@ export const useStore = defineStore("app", {
     navView: "solver" as NavView,
     sideView: "about" as SideView,
     headers: {
-      about: ["Welcome to WASM Postflop!"],
+      about: ["Welcome to Postflop Solver UI!"],
       "oop-range": ["OOP Range"],
       "ip-range": ["IP Range"],
       board: ["Board"],
       "tree-config": ["Tree Configuration"],
+      icm: ["ICM"],
       "run-solver": ["Run Solver"],
+      "saved-solves": ["Saved Solves"],
     },
     isSolverRunning: false,
     isFinalizing: false,
     isSolverPaused: false,
     isSolverFinished: false,
+    // "chips" or "payout_delta" (tournament ICM), as reported by the server
+    evUnit: "chips",
   }),
 
   getters: {
@@ -112,6 +121,10 @@ export const useStore = defineStore("app", {
         state.isSolverFinished
       );
     },
+    isIcm: (state) =>
+      state.evUnit !== "chips" ||
+      useSavedConfigStore().evModel.mode !== "chip_ev",
+    evLabel: (state) => (state.evUnit === "chips" ? "EV" : "Payout EV"),
   },
 });
 
@@ -151,6 +164,7 @@ export const useConfigStore = defineStore("config", {
     expectedBoardLength: 0,
     addedLines: "",
     removedLines: "",
+    evModel: defaultEvSettings(),
   }),
 
   getters: {
@@ -203,6 +217,7 @@ export const useTmpConfigStore = defineStore("tmpConfig", {
     expectedBoardLength: 0,
     addedLines: "",
     removedLines: "",
+    evModel: defaultEvSettings(),
   }),
 });
 
@@ -238,5 +253,6 @@ export const useSavedConfigStore = defineStore("savedConfig", {
     expectedBoardLength: 0,
     addedLines: "",
     removedLines: "",
+    evModel: defaultEvSettings(),
   }),
 });

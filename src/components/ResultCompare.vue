@@ -74,7 +74,7 @@
             'font-semibold': !isNaN(ev[0]) && ev[0] >= (1 - EPS) * ev[1],
           }"
         />
-        <div class="flex-grow text-center underline">EV</div>
+        <div class="flex-grow text-center underline">{{ evLabel }}</div>
         <Ev
           :value="ev[1]"
           :digits="evDigits"
@@ -88,7 +88,7 @@
       <BarChart :values="ev" />
     </div>
 
-    <div class="flex flex-col gap-0.5">
+    <div v-if="!isIcm" class="flex flex-col gap-0.5">
       <div class="flex">
         <Percentage
           :value="eqr[0]"
@@ -117,6 +117,7 @@ import { computed, defineComponent, h } from "vue";
 import { average, toFixed1, toFixed, toFixedAdaptive } from "../utils";
 import { Results, Spot, SpotChance } from "../result-types";
 
+import { useStore } from "../store";
 import { StarIcon } from "@heroicons/vue/24/solid";
 
 const EPS = 2e-6;
@@ -180,6 +181,10 @@ export default defineComponent({
   },
 
   setup(props) {
+    const store = useStore();
+    const isIcm = computed(() => store.isIcm);
+    const evLabel = computed(() => store.evLabel);
+
     const player = computed(() => {
       if (props.selectedChance) return "chance";
       return props.selectedSpot.player;
@@ -241,6 +246,8 @@ export default defineComponent({
     });
 
     return {
+      isIcm,
+      evLabel,
       EPS,
       player,
       combos,

@@ -77,7 +77,7 @@ import {
   onUnmounted,
   watch,
 } from "vue";
-import { useSavedConfigStore } from "../store";
+import { useSavedConfigStore, useStore } from "../store";
 import {
   ranks,
   cardPairCellIndex,
@@ -188,6 +188,7 @@ export default defineComponent({
 
   setup(props, context) {
     const config = useSavedConfigStore();
+    const store = useStore();
 
     const clickedCellIndex = ref(-1);
 
@@ -341,12 +342,22 @@ export default defineComponent({
           middle = 0.5;
           highest = 1;
         } else if (options.contentBasics === "ev") {
-          const amounts = props.totalBetAmount;
-          const amountSum = Math.min(...amounts) + amounts[playerIndex];
-          const pot = config.startingPot + amountSum;
-          lowest = 0;
-          middle = pot / 2;
-          highest = pot;
+          if (store.isIcm) {
+            // payout units: scale by the data instead of the pot
+            const finite = Array.from(results.ev[playerIndex]).filter((x) =>
+              isFinite(x)
+            );
+            lowest = finite.length > 0 ? Math.min(...finite) : 0;
+            highest = finite.length > 0 ? Math.max(...finite) : 1;
+            middle = (lowest + highest) / 2;
+          } else {
+            const amounts = props.totalBetAmount;
+            const amountSum = Math.min(...amounts) + amounts[playerIndex];
+            const pot = config.startingPot + amountSum;
+            lowest = 0;
+            middle = pot / 2;
+            highest = pot;
+          }
         } else if (options.contentBasics === "eqr") {
           lowest = 0;
           middle = 1;

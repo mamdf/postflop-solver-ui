@@ -23,7 +23,49 @@
 
   <div v-if="message" class="my-3">{{ message }}</div>
 
-  <table v-if="solves.length > 0" class="mt-4 text-sm">
+  <div class="mt-6 font-semibold">In memory</div>
+  <div class="text-sm text-gray-600">
+    Finished runs still on the server, saved or not. They are dropped when idle
+    too long or when a new solve needs the room.
+  </div>
+  <table v-if="live.length > 0" class="mt-2 text-sm">
+    <thead>
+      <tr class="text-left">
+        <th class="pr-4">Board</th>
+        <th class="pr-4">Iterations</th>
+        <th class="pr-4">Exploitability</th>
+        <th class="pr-4">EV unit</th>
+        <th class="pr-4">Expires in</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="g in live" :key="g.game_id">
+        <td class="pr-4 font-semibold">{{ boardText(liveBoard(g)) }}</td>
+        <td class="pr-4">{{ g.iterations }}</td>
+        <td class="pr-4">{{ g.exploitability?.toFixed(3) ?? "-" }}</td>
+        <td class="pr-4">{{ g.ev_unit }}</td>
+        <td class="pr-4">{{ Math.ceil(g.expires_in_secs / 60) }} min</td>
+        <td class="whitespace-nowrap">
+          <span v-if="g.game_id === currentGameId" class="text-gray-600">
+            Current
+          </span>
+          <button
+            v-else
+            class="button-base button-blue"
+            :disabled="busy || store.isSolverRunning || store.isFinalizing"
+            @click="openLive(g.game_id)"
+          >
+            Load
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <div v-else class="mt-2 text-gray-600">No finished runs in memory.</div>
+
+  <div class="mt-6 font-semibold">Saved</div>
+  <table v-if="solves.length > 0" class="mt-2 text-sm">
     <thead>
       <tr class="text-left">
         <th class="pr-4">Board</th>
@@ -37,7 +79,7 @@
     </thead>
     <tbody>
       <tr v-for="s in solves" :key="s.id">
-        <td class="pr-4 font-semibold">{{ boardText(s) }}</td>
+        <td class="pr-4 font-semibold">{{ boardText(s.board) }}</td>
         <td class="pr-4">{{ s.num_iterations }}</td>
         <td class="pr-4">{{ s.final_exploitability.toFixed(3) }}</td>
         <td class="pr-4">{{ s.ev_unit }}</td>
@@ -62,12 +104,12 @@
       </tr>
     </tbody>
   </table>
-  <div v-else class="mt-4 text-gray-600">No saved solves.</div>
+  <div v-else class="mt-2 text-gray-600">No saved solves.</div>
 </template>
 
 <script lang="ts">
-import { defineComponent, nextTick, onMounted, ref } from "vue";
-import { rangeApi, solvesApi, SolveRecord } from "../api";
+import { defineComponent, nextTick, ref, watch } from "vue";
+import { LiveGame, rangeApi, solvesApi, SolveRecord } from "../api";
 import { evSettingsFromRequest } from "../ev-model";
 import { useStore, useConfigStore, saveConfig, saveConfigTmp } from "../store";
 import { parseCardString } from "../utils";
@@ -111,16 +153,24 @@ export default defineComponent({
     const config = useConfigStore();
 
     const solves = ref<SolveRecord[]>([]);
+    const live = ref<LiveGame[]>([]);
+    const currentGameId = ref<string | null>(null);
     const memo = ref("");
     const message = ref("");
     const busy = ref(false);
 
-    const boardText = (s: SolveRecord) =>
-      [s.board.flop, s.board.turn, s.board.river].filter(Boolean).join(" ");
+    const boardText = (b: SolveRecord["board"]) =>
+      [b.flop, b.turn, b.river].filter(Boolean).join(" ");
+
+    const liveBoard = (g: LiveGame) => (g.request as LoadedRequest).board;
 
     const refresh = async () => {
       try {
-        solves.value = await solvesApi.list();
+        [solves.value, live.value] = await Promise.all([
+          solvesApi.list(),
+          solvesApi.live(),
+        ]);
+        currentGameId.value = solvesApi.currentGameId();
       } catch (e) {
         message.value = `Error: ${errorText(e)}`;
       }
@@ -208,11 +258,15 @@ export default defineComponent({
       saveConfig();
     };
 
-    const load = async (id: number) => {
+    // Makes a finalized game (saved or in memory) the current one.
+    const openGame = async (
+      fetchGame: () => Promise<{ request: unknown; ev_unit: string }>,
+      notFound: string
+    ) => {
       busy.value = true;
       message.value = "Loading...";
       try {
-        const res = await solvesApi.load(id);
+        const res = await fetchGame();
         // force the result viewer to re-initialize on the new game
         store.isSolverFinished = false;
         await nextTick();
@@ -230,25 +284,45 @@ export default defineComponent({
           message.value = "Loaded. Open the Results tab to browse the solve.";
         }
       } catch (e) {
-        message.value = isNotFound(e)
-          ? "Solve not found on the server. Please re-solve."
-          : `Error: ${errorText(e)}`;
+        message.value = isNotFound(e) ? notFound : `Error: ${errorText(e)}`;
       }
       busy.value = false;
+      await refresh();
     };
 
-    onMounted(refresh);
+    const load = (id: number) =>
+      openGame(
+        () => solvesApi.load(id),
+        "Solve not found on the server. Please re-solve."
+      );
+
+    const openLive = (id: string) =>
+      openGame(
+        () => solvesApi.open(id),
+        "This run is no longer in memory on the server."
+      );
+
+    // the view stays mounted (v-show): refresh whenever it is shown
+    watch(
+      () => store.sideView,
+      (view) => view === "saved-solves" && refresh(),
+      { immediate: true }
+    );
 
     return {
       store,
       solves,
+      live,
+      currentGameId,
       memo,
       message,
       busy,
       boardText,
+      liveBoard,
       refresh,
       save,
       load,
+      openLive,
       remove,
     };
   },

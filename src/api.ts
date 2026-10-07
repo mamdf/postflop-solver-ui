@@ -86,6 +86,17 @@ export type SolveRecord = {
   [key: string]: unknown;
 };
 
+/** A finalized game still in server memory (unsaved runs included). */
+export type LiveGame = {
+  game_id: string;
+  request: unknown;
+  ev_unit: string;
+  target_exploitability: number;
+  iterations: number;
+  exploitability: number | null;
+  expires_in_secs: number;
+};
+
 type NodeResponse = {
   current_player: CurrentPlayer;
   num_actions: number;
@@ -128,6 +139,8 @@ const toNumbers = (data: (number | null)[]) =>
   Float64Array.from(data, (v) => v ?? NaN);
 
 let gameId: string | null = null;
+// Finalized games stay on the server (until TTL/eviction) so they can be reopened.
+let finalized = false;
 let history: number[] = [];
 let lastNode: { key: string; value: NodeResponse } | null = null;
 let memory: [number, number] = [0, 0];
@@ -142,6 +155,7 @@ const closeGame = async () => {
   const id = gameId;
   gameId = null;
   lastNode = null;
+  if (finalized) return;
   try {
     await post(`/game/${id}/close`);
   } catch {
@@ -151,7 +165,7 @@ const closeGame = async () => {
 
 // Free server memory when the tab goes away.
 window.addEventListener("pagehide", () => {
-  if (gameId) {
+  if (gameId && !finalized) {
     const blob = new Blob(["{}"], { type: "application/json" });
     navigator.sendBeacon(`${BASE}/game/${gameId}/close`, blob);
   }
@@ -169,6 +183,7 @@ const node = async (append: ArrayLike<number> = []) => {
 const setGame = async (id: string) => {
   await closeGame();
   gameId = id;
+  finalized = true;
   history = [];
 };
 
@@ -250,6 +265,7 @@ export const handler = {
         threads,
       });
       gameId = res.game_id;
+      finalized = false;
       history = [];
       memory = res.memory;
       handler.info = {
@@ -309,6 +325,7 @@ export const handler = {
 
   async finalize() {
     await post(gamePath("finalize"));
+    finalized = true;
   },
 
   async close() {
@@ -412,6 +429,28 @@ export const solvesApi = {
     };
     return res;
   },
+
+  /** Finalized games in server memory, most recently used first. */
+  async live() {
+    const res = await parse<{ games: LiveGame[] }>(await fetch(`${BASE}/game`));
+    return res.games;
+  },
+
+  /** Reopens an in-memory game as the current one. */
+  async open(id: string) {
+    const res = await parse<LiveGame>(
+      await fetch(`${BASE}/game/${encodeURIComponent(id)}`)
+    );
+    if (id !== gameId) await setGame(id);
+    handler.info = {
+      ...handler.info,
+      targetExploitability: res.target_exploitability,
+      evUnit: res.ev_unit,
+    };
+    return res;
+  },
+
+  currentGameId: () => gameId,
 
   async remove(solveId: number) {
     await parse(await fetch(`${BASE}/solves/${solveId}`, { method: "DELETE" }));

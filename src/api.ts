@@ -206,7 +206,8 @@ export const handler = {
     addedLines: string,
     removedLines: string,
     evModel?: EvModel,
-    targetExploitabilityPct?: number
+    targetExploitabilityPct?: number,
+    threads?: number
   ): Promise<string> {
     await closeGame();
     try {
@@ -246,6 +247,7 @@ export const handler = {
         rake_cap: rakeCap,
         ev_model: evModel,
         target_exploitability_pct: targetExploitabilityPct,
+        threads,
       });
       gameId = res.game_id;
       history = [];
@@ -370,6 +372,12 @@ export const treeApi = {
     return post<TreeResponse>("/game/tree", { params, line, edit });
   },
 };
+
+/** Server CPU info: default solver threads and the most a game may use. */
+export const serverInfo = async () =>
+  parse<{ threads: number; logical_cores: number }>(
+    await fetch(`${BASE}/info`)
+  );
 
 export const solvesApi = {
   async list() {

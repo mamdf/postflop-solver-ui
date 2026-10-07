@@ -1,8 +1,24 @@
 <template>
   <div class="flex my-1 items-center">
+    Number of threads:
+    <input
+      v-model="numThreads"
+      type="number"
+      :class="
+        'w-20 ml-2 px-2 py-1 rounded-lg text-sm text-center ' +
+        (!isNumThreadsValid ? 'input-error' : '')
+      "
+      min="1"
+      :max="maxThreads"
+    />
     <button
-      class="button-base button-blue"
-      :disabled="isTreeBuilding || store.isSolverRunning || store.isFinalizing"
+      class="ml-3 button-base button-blue"
+      :disabled="
+        isTreeBuilding ||
+        store.isSolverRunning ||
+        store.isFinalizing ||
+        !isNumThreadsValid
+      "
       @click="buildTree"
     >
       Build New Tree
@@ -230,7 +246,7 @@
 
 <script lang="ts">
 import { computed, defineComponent, ref } from "vue";
-import { handler } from "../api";
+import { handler, serverInfo } from "../api";
 import { evModelRequest, evSettingsErrors } from "../ev-model";
 import {
   useStore,
@@ -379,6 +395,24 @@ export default defineComponent({
     const config = useConfigStore();
     const tmpConfig = useTmpConfigStore();
 
+    // Solver threads for the server-side game; defaults/limits come from GET /info.
+    const numThreads = ref(navigator.hardwareConcurrency || 1);
+    const maxThreads = ref(navigator.hardwareConcurrency || 1);
+    serverInfo()
+      .then((info) => {
+        numThreads.value = info.threads;
+        maxThreads.value = info.logical_cores;
+      })
+      .catch(() => {
+        // keep browser defaults; init reports the real error
+      });
+    const isNumThreadsValid = computed(
+      () =>
+        numThreads.value >= 1 &&
+        numThreads.value <= maxThreads.value &&
+        numThreads.value % 1 === 0
+    );
+
     const targetExploitability = ref(0.3);
     const maxIterations = ref(1000);
 
@@ -471,7 +505,8 @@ export default defineComponent({
         tmpConfig.addedLines,
         tmpConfig.removedLines,
         evModelRequest(tmpConfig.evModel),
-        targetExploitability.value > 0 ? targetExploitability.value : undefined
+        targetExploitability.value > 0 ? targetExploitability.value : undefined,
+        numThreads.value
       );
 
       if (errorString) {
@@ -591,6 +626,9 @@ export default defineComponent({
 
     return {
       store,
+      numThreads,
+      maxThreads,
+      isNumThreadsValid,
       targetExploitability,
       maxIterations,
       isTreeBuilding,

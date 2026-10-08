@@ -6,6 +6,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 API_DIR="$(cd "${ROOT_DIR}/../../adapters/rust/postflop-solver-api" && pwd)"
 PORT="${PORT:-5174}"
+UI_HOST="${UI_HOST:-127.0.0.1}"         # UI bind; a VPS passes its tailnet name
 API_EXPLICIT="${API_URL:+1}"            # an explicit API_URL is never started here
 export API_URL="${API_URL:-http://127.0.0.1:3001}"
 
@@ -48,8 +49,8 @@ else
   API_PID=$!
 fi
 
-echo "[dev] starting UI on http://127.0.0.1:${PORT}"
-(cd "${ROOT_DIR}" && exec npm run dev -- --host 127.0.0.1 --port "${PORT}") &
+echo "[dev] starting UI on http://${UI_HOST}:${PORT}"
+(cd "${ROOT_DIR}" && exec npm run dev -- --host "${UI_HOST}" --port "${PORT}") &
 UI_PID=$!
 
 wait_status=0

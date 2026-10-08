@@ -10,7 +10,7 @@ just setup
 just dev           # UI on http://127.0.0.1:5174 (PORT=...) + API on :3001
 ```
 
-`just dev` reuses a healthy API on `:3001` or starts it (`cargo run --release`), and stops only what it started. `just web` runs the UI alone against `API_URL` (default `http://127.0.0.1:3001`); an explicit `API_URL` is never started by `just dev`.
+`just dev` reuses a healthy API on `:3001` or starts it (`cargo run --release`), and stops only what it started. `just web` runs the UI alone against `API_URL` (default `http://127.0.0.1:3001`); an explicit `API_URL` is never started by `just dev`. `UI_HOST` (default `127.0.0.1`) sets the UI bind, e.g. `UI_HOST=azure API_URL=http://azure:3001` on a VPS so the dev server is reachable over Tailscale.
 
 ## Production
 

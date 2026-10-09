@@ -12,7 +12,8 @@ export type SideView =
   | "tree-config"
   | "icm"
   | "run-solver"
-  | "saved-solves";
+  | "saved-solves"
+  | "server";
 
 export const saveConfigTmp = () => {
   const config = useConfigStore();
@@ -103,6 +104,7 @@ export const useStore = defineStore("app", {
       icm: ["ICM"],
       "run-solver": ["Run Solver"],
       "saved-solves": ["Saved Solves"],
+      server: ["Server"],
     },
     isSolverRunning: false,
     isFinalizing: false,

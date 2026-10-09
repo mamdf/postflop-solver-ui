@@ -60,6 +60,10 @@
     >
       Saved Solves
     </button>
+
+    <button :class="itemStyle('server')" @click="store.sideView = 'server'">
+      Server
+    </button>
   </aside>
 </template>
 

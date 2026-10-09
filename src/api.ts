@@ -95,6 +95,20 @@ export type LiveGame = {
   iterations: number;
   exploitability: number | null;
   expires_in_secs: number;
+  /** Solver storage of the game (compressed when compression is on). */
+  memory_bytes: number;
+};
+
+export type SettingValue = number | boolean | null;
+
+/** A server setting; `source` says where its value comes from (env pins it). */
+export type SettingEntry = {
+  value: SettingValue;
+  default: SettingValue;
+  source: "env" | "saved" | "runtime" | "default";
+  /** False when a change applies only after a server restart. */
+  live: boolean;
+  env: string;
 };
 
 type NodeResponse = {
@@ -452,7 +466,33 @@ export const solvesApi = {
 
   currentGameId: () => gameId,
 
+  /** Frees an in-memory game or API session; forgets it if it is the current one. */
+  async free(id: string) {
+    await post(`/game/${encodeURIComponent(id)}/close`);
+    if (id === gameId) {
+      gameId = null;
+      lastNode = null;
+    }
+  },
+
   async remove(solveId: number) {
     await parse(await fetch(`${BASE}/solves/${solveId}`, { method: "DELETE" }));
+  },
+};
+
+export const settingsApi = {
+  async get() {
+    return parse<Record<string, SettingEntry>>(await fetch(`${BASE}/settings`));
+  },
+
+  /** Changes settings now; `persist` also saves them as the server's defaults. */
+  async update(values: Record<string, SettingValue>, persist: boolean) {
+    return parse<Record<string, SettingEntry>>(
+      await fetch(`${BASE}/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ values, persist }),
+      })
+    );
   },
 };

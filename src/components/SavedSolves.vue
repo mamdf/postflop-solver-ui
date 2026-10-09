@@ -26,8 +26,9 @@
   <div class="mt-6 font-semibold">In memory</div>
   <div class="text-sm text-gray-600">
     Finished runs still on the server, saved or not, including solves made
-    through the API (ids <code>solve-N</code>). They are dropped when idle too
-    long or when a new solve needs the room.
+    through the API (ids <code>solve-N</code>). Both share one limit (see
+    Server): a solve is dropped when idle too long, or when a new one needs the
+    room and it is the least recently used.
   </div>
   <table v-if="live.length > 0" class="mt-2 text-sm">
     <thead>
@@ -36,6 +37,7 @@
         <th class="pr-4">Iterations</th>
         <th class="pr-4">Exploitability</th>
         <th class="pr-4">EV unit</th>
+        <th class="pr-4">Memory</th>
         <th class="pr-4">Expires in</th>
         <th></th>
       </tr>
@@ -46,19 +48,33 @@
         <td class="pr-4">{{ g.iterations }}</td>
         <td class="pr-4">{{ g.exploitability?.toFixed(3) ?? "-" }}</td>
         <td class="pr-4">{{ g.ev_unit }}</td>
+        <td class="pr-4">{{ sizeText(g.memory_bytes) }}</td>
         <td class="pr-4">{{ Math.ceil(g.expires_in_secs / 60) }} min</td>
         <td class="whitespace-nowrap">
-          <span v-if="g.game_id === currentGameId" class="text-gray-600">
+          <span
+            v-if="g.game_id === currentGameId"
+            class="inline-block mr-2 text-gray-600"
+          >
             Current
           </span>
           <button
             v-else
-            class="button-base button-blue"
+            class="button-base button-blue mr-2"
             :disabled="busy || store.isSolverRunning || store.isFinalizing"
             @click="openLive(g.game_id)"
           >
             Load
           </button>
+          <button
+            class="button-base button-red"
+            :disabled="busy"
+            @click="free(g.game_id)"
+          >
+            {{ confirmFree === g.game_id ? "Confirm free" : "Free" }}
+          </button>
+          <span v-if="confirmFree === g.game_id" class="ml-2 text-gray-600">
+            An agent may be using it and would have to re-solve.
+          </span>
         </td>
       </tr>
     </tbody>
@@ -165,6 +181,11 @@ export default defineComponent({
 
     const liveBoard = (g: LiveGame) => (g.request as LoadedRequest).board;
 
+    const sizeText = (bytes: number) =>
+      bytes >= 2 ** 30
+        ? `${(bytes / 2 ** 30).toFixed(1)} GB`
+        : `${Math.max(1, Math.round(bytes / 2 ** 20))} MB`;
+
     const refresh = async () => {
       try {
         [solves.value, live.value] = await Promise.all([
@@ -192,6 +213,28 @@ export default defineComponent({
           : `Error: ${errorText(e)}`;
       }
       busy.value = false;
+    };
+
+    // API sessions ask once more: their agent would have to re-solve.
+    const confirmFree = ref<string | null>(null);
+
+    const free = async (id: string) => {
+      if (id.startsWith("solve-") && confirmFree.value !== id) {
+        confirmFree.value = id;
+        return;
+      }
+      confirmFree.value = null;
+      busy.value = true;
+      try {
+        const wasCurrent = id === solvesApi.currentGameId();
+        await solvesApi.free(id);
+        if (wasCurrent) store.isSolverFinished = false;
+        message.value = "Freed.";
+      } catch (e) {
+        message.value = `Error: ${errorText(e)}`;
+      }
+      busy.value = false;
+      await refresh();
     };
 
     const remove = async (id: number) => {
@@ -320,6 +363,9 @@ export default defineComponent({
       busy,
       boardText,
       liveBoard,
+      sizeText,
+      confirmFree,
+      free,
       refresh,
       save,
       load,

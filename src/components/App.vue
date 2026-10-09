@@ -48,6 +48,9 @@
         <div v-show="store.sideView === 'saved-solves'">
           <SavedSolves />
         </div>
+        <div v-show="store.sideView === 'server'">
+          <ServerSettings />
+        </div>
       </div>
     </div>
 
@@ -74,6 +77,7 @@ import TreeConfig from "./TreeConfig.vue";
 import IcmPanel from "./IcmPanel.vue";
 import RunSolver from "./RunSolver.vue";
 import SavedSolves from "./SavedSolves.vue";
+import ServerSettings from "./ServerSettings.vue";
 import ResultViewer from "./ResultViewer.vue";
 
 export default defineComponent({
@@ -87,6 +91,7 @@ export default defineComponent({
     IcmPanel,
     RunSolver,
     SavedSolves,
+    ServerSettings,
     ResultViewer,
   },
 

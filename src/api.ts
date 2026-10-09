@@ -86,7 +86,7 @@ export type SolveRecord = {
   [key: string]: unknown;
 };
 
-/** A finalized game still in server memory (unsaved runs included). */
+/** A finalized game still in server memory (unsaved runs and API solve sessions included). */
 export type LiveGame = {
   game_id: string;
   request: unknown;

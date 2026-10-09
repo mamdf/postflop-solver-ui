@@ -25,8 +25,9 @@
 
   <div class="mt-6 font-semibold">In memory</div>
   <div class="text-sm text-gray-600">
-    Finished runs still on the server, saved or not. They are dropped when idle
-    too long or when a new solve needs the room.
+    Finished runs still on the server, saved or not, including solves made
+    through the API (ids <code>solve-N</code>). They are dropped when idle too
+    long or when a new solve needs the room.
   </div>
   <table v-if="live.length > 0" class="mt-2 text-sm">
     <thead>

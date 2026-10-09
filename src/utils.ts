@@ -274,6 +274,14 @@ export const convertBetString = (s: string): string => {
     .join(",");
 };
 
+/** Inverse of `convertBetString`: "50%,100%,a" -> "50, 100, a". */
+export const unconvertBetString = (s: string): string =>
+  s
+    .split(",")
+    .map((e) => e.trim().replace(/%$/, ""))
+    .filter((e) => e !== "")
+    .join(", ");
+
 const parseBetAmount = (s: string, index: number) => {
   let indexEnd = index;
   while (indexEnd < s.length && /\d/.test(s[indexEnd])) indexEnd++;

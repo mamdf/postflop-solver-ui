@@ -113,7 +113,7 @@ import { defineComponent, nextTick, ref, watch } from "vue";
 import { LiveGame, rangeApi, solvesApi, SolveRecord } from "../api";
 import { evSettingsFromRequest } from "../ev-model";
 import { useStore, useConfigStore, saveConfig, saveConfigTmp } from "../store";
-import { parseCardString } from "../utils";
+import { parseCardString, unconvertBetString } from "../utils";
 
 // Subset of the API's SolveRequest that is mapped back onto the config.
 type StreetRequest = {
@@ -230,20 +230,20 @@ export default defineComponent({
       config.rakePercent = Math.round(tree.rake_rate * 1e6) / 1e4;
       config.rakeCap = tree.rake_cap;
       config.donkOption = !!(tree.turn.oop_donk || tree.river.oop_donk);
-      config.oopFlopBet = tree.flop.oop.bet;
-      config.oopFlopRaise = tree.flop.oop.raise;
-      config.oopTurnBet = tree.turn.oop.bet;
-      config.oopTurnRaise = tree.turn.oop.raise;
-      config.oopTurnDonk = tree.turn.oop_donk ?? "";
-      config.oopRiverBet = tree.river.oop.bet;
-      config.oopRiverRaise = tree.river.oop.raise;
-      config.oopRiverDonk = tree.river.oop_donk ?? "";
-      config.ipFlopBet = tree.flop.ip.bet;
-      config.ipFlopRaise = tree.flop.ip.raise;
-      config.ipTurnBet = tree.turn.ip.bet;
-      config.ipTurnRaise = tree.turn.ip.raise;
-      config.ipRiverBet = tree.river.ip.bet;
-      config.ipRiverRaise = tree.river.ip.raise;
+      config.oopFlopBet = unconvertBetString(tree.flop.oop.bet);
+      config.oopFlopRaise = unconvertBetString(tree.flop.oop.raise);
+      config.oopTurnBet = unconvertBetString(tree.turn.oop.bet);
+      config.oopTurnRaise = unconvertBetString(tree.turn.oop.raise);
+      config.oopTurnDonk = unconvertBetString(tree.turn.oop_donk ?? "");
+      config.oopRiverBet = unconvertBetString(tree.river.oop.bet);
+      config.oopRiverRaise = unconvertBetString(tree.river.oop.raise);
+      config.oopRiverDonk = unconvertBetString(tree.river.oop_donk ?? "");
+      config.ipFlopBet = unconvertBetString(tree.flop.ip.bet);
+      config.ipFlopRaise = unconvertBetString(tree.flop.ip.raise);
+      config.ipTurnBet = unconvertBetString(tree.turn.ip.bet);
+      config.ipTurnRaise = unconvertBetString(tree.turn.ip.raise);
+      config.ipRiverBet = unconvertBetString(tree.river.ip.bet);
+      config.ipRiverRaise = unconvertBetString(tree.river.ip.raise);
       config.addAllInThreshold =
         Math.round(tree.add_allin_threshold * 1e6) / 1e4;
       config.forceAllInThreshold =

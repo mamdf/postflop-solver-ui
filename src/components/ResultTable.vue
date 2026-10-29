@@ -214,9 +214,11 @@
             :key="item[0]"
             :class="
               'relative ' +
-              (item[0] === scrollTarget ? 'bg-yellow-200' : 'bg-gray-50')
+              rowBg(item[0]) +
+              (selectable ? ' cursor-pointer' : '')
             "
             style="height: calc(1.9rem + 1px)"
+            @click="selectable && $emit('select-pair', item[0])"
           >
             <td
               v-for="column in columns"
@@ -224,10 +226,7 @@
               :class="
                 'row-divider ' +
                 (column.type === 'card'
-                  ? 'sticky left-0 z-10 ' +
-                    (item[0] === scrollTarget
-                      ? 'bg-yellow-200 '
-                      : 'bg-gray-50 ')
+                  ? 'sticky left-0 z-10 ' + rowBg(item[0]) + ' '
                   : 'relative ') +
                 (column.type === 'bar' ? 'pt-[0.3125rem] pb-1 px-1' : 'pt-0.5')
               "
@@ -518,6 +517,19 @@ export default defineComponent({
       type: Number as () => number | null,
       default: null,
     },
+    // rows can be clicked to select their card pair (`select-pair`)
+    selectable: {
+      type: Boolean,
+      default: false,
+    },
+    selectedPair: {
+      type: Number as () => number | null,
+      default: null,
+    },
+  },
+
+  emits: {
+    "select-pair": (_pair: number) => true,
   },
 
   setup(props) {
@@ -580,6 +592,13 @@ export default defineComponent({
         return [cardText(card1)];
       }
     };
+
+    const rowBg = (pair: number) =>
+      pair === props.scrollTarget
+        ? "bg-yellow-200"
+        : pair === props.selectedPair
+        ? "bg-blue-100"
+        : "bg-gray-50";
 
     const defaultSortKey = computed(() => {
       if (props.tableMode !== "graphs") return INDEX_CARD_PAIR;
@@ -1092,6 +1111,7 @@ export default defineComponent({
       updateDisplayOptions,
       tableDiv,
       pairText,
+      rowBg,
       sortKey,
       sortBy,
       evDigits,

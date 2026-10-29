@@ -6,6 +6,15 @@
     </div>
 
     <div class="flex flex-wrap items-center gap-x-4 mt-1">
+      <label v-if="combo" class="cursor-pointer">
+        <input
+          v-model="scope"
+          class="mr-1 cursor-pointer"
+          type="radio"
+          value="combo"
+        />
+        Selected combo ({{ combo.name }})
+      </label>
       <label class="cursor-pointer">
         <input
           v-model="scope"
@@ -25,8 +34,8 @@
         />
         Whole range
       </label>
-      <span v-if="!hoverContent" class="text-gray-600">
-        (click a cell in the grid to select it)
+      <span v-if="!hoverContent && !combo" class="text-gray-600">
+        (click a grid cell or a combo row of the table to select it)
       </span>
     </div>
 
@@ -136,12 +145,20 @@ export default defineComponent({
       type: Object as () => HoverContent | null,
       default: null,
     },
+    // a single combo picked in the table
+    combo: {
+      type: Object as () => HoverContent | null,
+      default: null,
+    },
   },
 
   setup(props) {
     const store = useStore();
 
-    const scope = ref<"cell" | "range">("range");
+    // a selected combo wins over the grid cell (hovered or clicked)
+    const defaultScope = () =>
+      props.combo ? "combo" : props.hoverContent ? "cell" : "range";
+    const scope = ref<"combo" | "cell" | "range">(defaultScope());
     const percents = ref<number[]>([]);
 
     const key = computed(() => lockKey(props.history));
@@ -156,21 +173,25 @@ export default defineComponent({
     );
 
     watch(
-      () => props.hoverContent,
-      (content) => (scope.value = content ? "cell" : "range")
+      [() => props.hoverContent, () => props.combo],
+      () => (scope.value = defaultScope())
     );
 
-    const scopeHands = computed(() =>
-      scope.value === "cell" && props.hoverContent
-        ? props.hoverContent.indices
-        : Array.from({ length: numHands.value }, (_, i) => i)
+    const scoped = computed(() =>
+      scope.value === "combo"
+        ? props.combo
+        : scope.value === "cell"
+        ? props.hoverContent
+        : null
     );
 
-    const scopeText = computed(() =>
-      scope.value === "cell" && props.hoverContent
-        ? props.hoverContent.name
-        : "whole range"
+    const scopeHands = computed(
+      () =>
+        scoped.value?.indices ??
+        Array.from({ length: numHands.value }, (_, i) => i)
     );
+
+    const scopeText = computed(() => scoped.value?.name ?? "whole range");
 
     const isLockedHand = (hand: number) => {
       const strategy = lock.value?.strategy;

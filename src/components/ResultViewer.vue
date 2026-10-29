@@ -68,6 +68,9 @@
             :results="results"
             :display-player="displayPlayerBasics"
             :hover-content="basicsHoverContent"
+            :selectable="lockSpot !== null"
+            :selected-pair="lockCombo ? selectedPair : null"
+            @select-pair="onSelectPair"
           />
           <LockEditor
             v-if="lockSpot"
@@ -77,6 +80,7 @@
             :results="results"
             :cards="cards[lockSpot.player === 'oop' ? 0 : 1]"
             :hover-content="basicsHoverContent"
+            :combo="lockCombo"
           />
         </div>
       </template>
@@ -143,9 +147,10 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, ref } from "vue";
+import { computed, defineComponent, ref, watch } from "vue";
 import { useStore } from "../store";
 import { handler } from "../api";
+import { cardText } from "../utils";
 
 import {
   Results,
@@ -354,6 +359,35 @@ export default defineComponent({
       basicsHoverContent.value = content;
     };
 
+    // A combo row picked in the table as the lock scope (card pair; cleared on a new node).
+    const selectedPair = ref<number | null>(null);
+    watch(spotHistory, () => (selectedPair.value = null));
+
+    const onSelectPair = (pair: number) => {
+      selectedPair.value = selectedPair.value === pair ? null : pair;
+    };
+
+    const lockCombo = computed((): HoverContent | null => {
+      const pair = selectedPair.value;
+      if (!lockSpot.value || pair === null) return null;
+      const index =
+        cards.value[lockSpot.value.player === "oop" ? 0 : 1].indexOf(pair);
+      if (index === -1) return null;
+      const name = [pair >>> 8, pair & 0xff]
+        .map((card) => cardText(card))
+        .map((c) => c.rank + c.suitLetter)
+        .join("");
+      return { name, indices: [index] };
+    });
+
+    // a grid cell without the combo replaces it (the table no longer shows it)
+    watch(basicsHoverContent, (content) => {
+      const combo = lockCombo.value;
+      if (content && combo && !content.indices.includes(combo.indices[0])) {
+        selectedPair.value = null;
+      }
+    });
+
     const onDealCard = (card: number) => {
       dealtCard.value = card;
     };
@@ -388,6 +422,9 @@ export default defineComponent({
       displayPlayerChance,
       basicsHoverContent,
       onUpdateHoverContent,
+      selectedPair,
+      onSelectPair,
+      lockCombo,
       onDealCard,
     };
   },

@@ -59,15 +59,26 @@
           @update-hover-content="onUpdateHoverContent"
         />
 
-        <ResultTable
-          style="flex: 3"
-          table-mode="basics"
-          :cards="cards"
-          :selected-spot="selectedSpot"
-          :results="results"
-          :display-player="displayPlayerBasics"
-          :hover-content="basicsHoverContent"
-        />
+        <div class="flex flex-col min-w-0" style="flex: 3">
+          <ResultTable
+            class="flex-grow min-h-0"
+            table-mode="basics"
+            :cards="cards"
+            :selected-spot="selectedSpot"
+            :results="results"
+            :display-player="displayPlayerBasics"
+            :hover-content="basicsHoverContent"
+          />
+          <LockEditor
+            v-if="lockSpot"
+            :history="spotHistory"
+            :is-node-locked="isSpotLocked"
+            :spot="lockSpot"
+            :results="results"
+            :cards="cards[lockSpot.player === 'oop' ? 0 : 1]"
+            :hover-content="basicsHoverContent"
+          />
+        </div>
       </template>
 
       <template v-else-if="displayMode === 'graphs'">
@@ -154,6 +165,7 @@ import ResultTable from "./ResultTable.vue";
 import ResultCompare from "./ResultCompare.vue";
 import ResultGraphs from "./ResultGraphs.vue";
 import ResultChance from "./ResultChance.vue";
+import LockEditor from "./LockEditor.vue";
 
 export default defineComponent({
   components: {
@@ -164,6 +176,7 @@ export default defineComponent({
     ResultCompare,
     ResultGraphs,
     ResultChance,
+    LockEditor,
   },
 
   setup() {
@@ -183,6 +196,8 @@ export default defineComponent({
     const results = ref<Results | null>(null);
     const chanceReports = ref<ChanceReports | null>(null);
     const totalBetAmount = ref([0, 0]);
+    const spotHistory = ref<number[]>([]);
+    const isSpotLocked = ref(false);
 
     const isSolverFinished = ref(false);
     store.$subscribe(async (_, store) => {
@@ -224,7 +239,9 @@ export default defineComponent({
       newCurrentBoard: number[],
       newResults: Results,
       newChanceReports: ChanceReports | null,
-      newTotalBetAmount: number[]
+      newTotalBetAmount: number[],
+      newHistory: number[],
+      newIsSpotLocked: boolean
     ) => {
       dealtCard.value = -1;
       selectedSpot.value = newSelectedSpot;
@@ -233,6 +250,8 @@ export default defineComponent({
       results.value = newResults;
       chanceReports.value = newChanceReports;
       totalBetAmount.value = newTotalBetAmount;
+      spotHistory.value = newHistory;
+      isSpotLocked.value = newIsSpotLocked;
       isLocked.value = false;
 
       chanceMode.value = newSelectedChance?.player ?? "";
@@ -320,6 +339,13 @@ export default defineComponent({
       }
     });
 
+    // The strategy lock editor: acting player's node, no pending chance, shown as that player.
+    const lockSpot = computed(() => {
+      const spot = selectedSpot.value;
+      if (spot?.type !== "player" || selectedChance.value) return null;
+      return displayPlayerBasics.value === spot.player ? spot : null;
+    });
+
     /* Results */
 
     const basicsHoverContent = ref<HoverContent | null>(null);
@@ -344,6 +370,9 @@ export default defineComponent({
       results,
       chanceReports,
       totalBetAmount,
+      spotHistory,
+      isSpotLocked,
+      lockSpot,
       onUpdateSpot,
       displayMode,
       chanceMode,

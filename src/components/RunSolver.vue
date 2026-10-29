@@ -23,6 +23,25 @@
     >
       Build New Tree
     </button>
+    <button
+      v-if="hasLocks"
+      class="ml-3 button-base button-blue"
+      :disabled="
+        !store.isTreeKnown ||
+        isTreeBuilding ||
+        store.isSolverRunning ||
+        store.isFinalizing ||
+        !isNumThreadsValid ||
+        !isRunConfigValid
+      "
+      @click="resolveWithLocks"
+    >
+      Re-solve with locks ({{ numLocks }})
+    </button>
+  </div>
+
+  <div v-if="hasLocks && !store.isTreeKnown" class="my-1 text-gray-600">
+    A reopened game cannot be re-solved with locks: its tree edits are unknown.
   </div>
 
   <div class="my-1">Status: {{ treeStatus }}</div>
@@ -174,13 +193,7 @@
     <div class="flex mt-6 gap-3">
       <button
         class="button-base button-blue"
-        :disabled="
-          store.hasSolverRun ||
-          targetExploitability <= 0 ||
-          maxIterations < 0 ||
-          maxIterations % 1 !== 0 ||
-          maxIterations > 100000
-        "
+        :disabled="store.hasSolverRun || !isRunConfigValid"
         @click="runSolver"
       >
         Run Solver
@@ -203,12 +216,7 @@
       <button
         v-else
         class="button-base button-green"
-        :disabled="
-          targetExploitability <= 0 ||
-          maxIterations < 0 ||
-          maxIterations % 1 !== 0 ||
-          maxIterations > 100000
-        "
+        :disabled="!isRunConfigValid"
         @click="resumeSolver"
       >
         Resume
@@ -246,12 +254,13 @@
 
 <script lang="ts">
 import { computed, defineComponent, ref } from "vue";
-import { handler, serverInfo } from "../api";
+import { handler, serverInfo, solvesApi, Measure } from "../api";
 import { evModelRequest, evSettingsErrors } from "../ev-model";
 import {
   useStore,
   useConfigStore,
   useTmpConfigStore,
+  useSavedConfigStore,
   saveConfig,
   saveConfigTmp,
 } from "../store";
@@ -394,6 +403,7 @@ export default defineComponent({
     const store = useStore();
     const config = useConfigStore();
     const tmpConfig = useTmpConfigStore();
+    const savedConfig = useSavedConfigStore();
 
     // Solver threads for the server-side game; defaults/limits come from GET /info.
     const numThreads = ref(navigator.hardwareConcurrency || 1);
@@ -415,6 +425,18 @@ export default defineComponent({
 
     const targetExploitability = ref(0.3);
     const maxIterations = ref(1000);
+    const isRunConfigValid = computed(
+      () =>
+        targetExploitability.value > 0 &&
+        maxIterations.value >= 0 &&
+        maxIterations.value % 1 === 0 &&
+        maxIterations.value <= 100000
+    );
+
+    const numLocks = computed(() => Object.keys(store.nodeLocks).length);
+    const hasLocks = computed(
+      () => numLocks.value > 0 || Object.keys(store.appliedLocks).length > 0
+    );
 
     const isTreeBuilding = ref(false);
     const isTreeBuilt = ref(false);
@@ -426,6 +448,8 @@ export default defineComponent({
     const pauseFlag = ref(false);
     const currentIteration = ref(-1);
     const exploitability = ref(Number.POSITIVE_INFINITY);
+    // [oop, ip] gains when the game has locked nodes (exploitability is their mean)
+    const gains = ref<[number, number] | null>(null);
     const elapsedTimeMs = ref(-1);
     const queueMs = ref(0);
 
@@ -442,16 +466,32 @@ export default defineComponent({
       }
     });
 
+    const valueText = (value: number) => {
+      const percent = (value * 100) / config.startingPot;
+      return `${value.toFixed(2)} (${percent.toFixed(2)}%)`;
+    };
+
     const exploitabilityText = computed(() => {
       if (!Number.isFinite(exploitability.value)) {
         return "";
+      } else if (gains.value) {
+        const [oop, ip] = gains.value.map((g) => valueText(Math.max(g, 0)));
+        return `Residual (locked): ${valueText(
+          exploitability.value
+        )} · gains OOP ${oop} / IP ${ip}`;
       } else {
-        const valueText = exploitability.value.toFixed(2);
-        const percent = (exploitability.value * 100) / config.startingPot;
-        const percentText = `${percent.toFixed(2)}%`;
-        return `Exploitability: ${valueText} (${percentText})`;
+        return `Exploitability: ${valueText(exploitability.value)}`;
       }
     });
+
+    // Locked games stop on the larger gain, not on the mean.
+    const stopValue = () =>
+      gains.value ? Math.max(...gains.value) : exploitability.value;
+
+    const setMeasure = (m: Measure) => {
+      exploitability.value = Math.max(m.exploitability, 0);
+      gains.value = m.gains;
+    };
 
     const timeText = computed(() => {
       if (elapsedTimeMs.value === -1 || !store.isSolverFinished) {
@@ -461,50 +501,47 @@ export default defineComponent({
       }
     });
 
-    const buildTree = async () => {
+    // Builds a game from `src` (the tmp copy of a new config, or the saved one of the
+    // current game). Returns false on error.
+    const initGame = async (
+      src: ReturnType<typeof useTmpConfigStore | typeof useSavedConfigStore>
+    ) => {
       isTreeBuilt.value = false;
-
-      const configError = checkConfig(config);
-      if (configError !== null) {
-        treeStatus.value = `Error: ${configError}`;
-        return;
-      }
-
-      saveConfigTmp();
       isTreeBuilding.value = true;
+      store.setAppliedLocks([], false);
       store.isSolverPaused = false;
       store.isSolverFinished = false;
       treeStatus.value = "Building tree...";
 
       const errorString = await handler.init(
-        tmpConfig.rangeRaw[0],
-        tmpConfig.rangeRaw[1],
-        new Uint8Array(tmpConfig.board),
-        tmpConfig.startingPot,
-        tmpConfig.effectiveStack,
-        tmpConfig.rakePercent / 100,
-        tmpConfig.rakeCap,
-        tmpConfig.donkOption,
-        convertBetString(tmpConfig.oopFlopBet),
-        convertBetString(tmpConfig.oopFlopRaise),
-        convertBetString(tmpConfig.oopTurnBet),
-        convertBetString(tmpConfig.oopTurnRaise),
-        tmpConfig.donkOption ? convertBetString(tmpConfig.oopTurnDonk) : "",
-        convertBetString(tmpConfig.oopRiverBet),
-        convertBetString(tmpConfig.oopRiverRaise),
-        tmpConfig.donkOption ? convertBetString(tmpConfig.oopRiverDonk) : "",
-        convertBetString(tmpConfig.ipFlopBet),
-        convertBetString(tmpConfig.ipFlopRaise),
-        convertBetString(tmpConfig.ipTurnBet),
-        convertBetString(tmpConfig.ipTurnRaise),
-        convertBetString(tmpConfig.ipRiverBet),
-        convertBetString(tmpConfig.ipRiverRaise),
-        tmpConfig.addAllInThreshold / 100,
-        tmpConfig.forceAllInThreshold / 100,
-        tmpConfig.mergingThreshold / 100,
-        tmpConfig.addedLines,
-        tmpConfig.removedLines,
-        evModelRequest(tmpConfig.evModel),
+        src.rangeRaw[0],
+        src.rangeRaw[1],
+        new Uint8Array(src.board),
+        src.startingPot,
+        src.effectiveStack,
+        src.rakePercent / 100,
+        src.rakeCap,
+        src.donkOption,
+        convertBetString(src.oopFlopBet),
+        convertBetString(src.oopFlopRaise),
+        convertBetString(src.oopTurnBet),
+        convertBetString(src.oopTurnRaise),
+        src.donkOption ? convertBetString(src.oopTurnDonk) : "",
+        convertBetString(src.oopRiverBet),
+        convertBetString(src.oopRiverRaise),
+        src.donkOption ? convertBetString(src.oopRiverDonk) : "",
+        convertBetString(src.ipFlopBet),
+        convertBetString(src.ipFlopRaise),
+        convertBetString(src.ipTurnBet),
+        convertBetString(src.ipTurnRaise),
+        convertBetString(src.ipRiverBet),
+        convertBetString(src.ipRiverRaise),
+        src.addAllInThreshold / 100,
+        src.forceAllInThreshold / 100,
+        src.mergingThreshold / 100,
+        src.addedLines,
+        src.removedLines,
+        evModelRequest(src.evModel),
         targetExploitability.value > 0 ? targetExploitability.value : undefined,
         numThreads.value
       );
@@ -512,10 +549,9 @@ export default defineComponent({
       if (errorString) {
         isTreeBuilding.value = false;
         treeStatus.value = "Error: " + errorString;
-        return;
+        return false;
       }
 
-      saveConfig();
       store.evUnit = handler.info.evUnit;
 
       memoryUsage.value = await handler.memoryUsage(false);
@@ -530,6 +566,43 @@ export default defineComponent({
       isTreeBuilding.value = false;
       isTreeBuilt.value = true;
       treeStatus.value = `Successfully built tree (${threadText})`;
+      return true;
+    };
+
+    const buildTree = async () => {
+      isTreeBuilt.value = false;
+
+      const configError = checkConfig(config);
+      if (configError !== null) {
+        treeStatus.value = `Error: ${configError}`;
+        return;
+      }
+
+      saveConfigTmp();
+      if (await initGame(tmpConfig)) {
+        saveConfig();
+        store.setAppliedLocks([]);
+        store.isTreeKnown = true;
+      }
+    };
+
+    // Same config as the current game, as a new game with every draft lock applied. If it
+    // cannot start, the finished game is reopened so its results and the draft stay reachable.
+    const resolveWithLocks = async () => {
+      const previous = store.isSolverFinished
+        ? solvesApi.currentGameId()
+        : null;
+      if ((await initGame(savedConfig)) && (await runSolver())) return;
+      if (!previous) return;
+      try {
+        await solvesApi.open(previous);
+        isTreeBuilt.value = false;
+        store.setAppliedLocks(await handler.locks(), false);
+        store.isSolverFinished = true;
+        treeStatus.value += " (previous solve reopened)";
+      } catch {
+        // expired on the server: Build New Tree
+      }
     };
 
     const runSolver = async () => {
@@ -537,6 +610,7 @@ export default defineComponent({
       pauseFlag.value = false;
       currentIteration.value = -1;
       exploitability.value = Number.POSITIVE_INFINITY;
+      gains.value = null;
       elapsedTimeMs.value = -1;
       queueMs.value = 0;
 
@@ -544,18 +618,34 @@ export default defineComponent({
 
       startTime = performance.now();
 
+      let isAllocated = false;
       try {
         await handler.allocateMemory(isCompressionEnabled.value);
+        isAllocated = true;
+
+        const locks = Object.values(store.nodeLocks);
+        if (locks.length > 0) {
+          await handler.lock(
+            locks.map(({ history, strategy }) => ({ history, strategy }))
+          );
+          store.setAppliedLocks(locks, false);
+        }
 
         currentIteration.value = 0;
-        exploitability.value = Math.max(await handler.exploitability(), 0);
+        setMeasure(await handler.exploitability());
       } catch (e) {
         store.isSolverRunning = false;
         treeStatus.value = `Error: ${e instanceof Error ? e.message : e}`;
-        return;
+        // an allocated game cannot be allocated again: drop it
+        if (isAllocated) {
+          await handler.close();
+          isTreeBuilt.value = false;
+        }
+        return false;
       }
 
       await resumeSolver();
+      return true;
     };
 
     const stopSolver = () => {
@@ -585,7 +675,7 @@ export default defineComponent({
       while (
         !terminateFlag.value &&
         currentIteration.value < maxIterations.value &&
-        exploitability.value > target
+        stopValue() > target
       ) {
         if (pauseFlag.value) {
           const end = performance.now();
@@ -603,7 +693,7 @@ export default defineComponent({
         );
         currentIteration.value = res.iterationsDone;
         queueMs.value = res.queueMs;
-        exploitability.value = Math.max(res.exploitability, 0);
+        setMeasure(res);
       }
 
       store.isSolverRunning = false;
@@ -631,6 +721,9 @@ export default defineComponent({
       isNumThreadsValid,
       targetExploitability,
       maxIterations,
+      isRunConfigValid,
+      numLocks,
+      hasLocks,
       isTreeBuilding,
       isTreeBuilt,
       treeStatus,
@@ -643,6 +736,7 @@ export default defineComponent({
       exploitabilityText,
       timeText,
       buildTree,
+      resolveWithLocks,
       runSolver,
       queueMs,
       stopSolver,

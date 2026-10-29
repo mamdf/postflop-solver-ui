@@ -97,6 +97,22 @@ export type LiveGame = {
   expires_in_secs: number;
   /** Solver storage of the game (compressed when compression is on). */
   memory_bytes: number;
+  /** Number of strategy-locked nodes. */
+  num_locks: number;
+};
+
+/** A strategy lock: `strategy[action * #hands + hand]`, free hands -1. */
+export type NodeLock = {
+  history: number[];
+  player: "oop" | "ip";
+  num_actions: number;
+  strategy: number[];
+};
+
+/** Exploitability; with locks, the residual: mean of the [oop, ip] `gains`. */
+export type Measure = {
+  exploitability: number;
+  gains: [number, number] | null;
 };
 
 export type SettingValue = number | boolean | null;
@@ -117,6 +133,7 @@ type NodeResponse = {
   actions: string;
   total_bet_amount: [number, number];
   possible_cards: number;
+  locked: boolean;
 };
 
 export type GameInfo = {
@@ -151,6 +168,16 @@ const parse = async <T>(res: Response): Promise<T> => {
 
 const toNumbers = (data: (number | null)[]) =>
   Float64Array.from(data, (v) => v ?? NaN);
+
+type MeasureResponse = {
+  exploitability: number | null;
+  gains?: [number, number];
+};
+
+const toMeasure = (res: MeasureResponse): Measure => ({
+  exploitability: res.exploitability ?? NaN,
+  gains: res.gains ?? null,
+});
 
 let gameId: string | null = null;
 // Finalized games stay on the server (until TTL/eviction) so they can be reopened.
@@ -311,25 +338,36 @@ export const handler = {
 
   /** Runs `count` iterations from `start`; may stop early after `stop()`. */
   async iterate(start: number, count = 10) {
-    const res = await post<{
-      iterations_done: number;
-      exploitability: number | null;
-      queue_ms: number;
-      stopped: boolean;
-    }>(gamePath("iterate"), { start, count });
+    const res = await post<
+      MeasureResponse & {
+        iterations_done: number;
+        queue_ms: number;
+        stopped: boolean;
+      }
+    >(gamePath("iterate"), { start, count });
     return {
+      ...toMeasure(res),
       iterationsDone: res.iterations_done,
-      exploitability: res.exploitability ?? NaN,
       queueMs: res.queue_ms,
       stopped: res.stopped,
     };
   },
 
   async exploitability() {
-    const res = await post<{ exploitability: number | null }>(
-      gamePath("exploitability")
-    );
-    return res.exploitability ?? NaN;
+    return toMeasure(await post<MeasureResponse>(gamePath("exploitability")));
+  },
+
+  /** Locks nodes (all or none; after allocate, before the first iterate). */
+  async lock(entries: { history: number[]; strategy: number[] }[]) {
+    const res = await post<{ num_locks: number }>(gamePath("lock"), {
+      locks: entries,
+    });
+    return res.num_locks;
+  },
+
+  async locks() {
+    const res = await post<{ locks: NodeLock[] }>(gamePath("locks"));
+    return res.locks;
   },
 
   /** Interrupts the running iterate chunk (does not block). */
@@ -357,6 +395,11 @@ export const handler = {
 
   async numActions() {
     return (await node()).num_actions;
+  },
+
+  /** Whether the current node is strategy-locked (through any isomorphic history). */
+  async isLocked() {
+    return (await node()).locked;
   },
 
   async actionsAfter(append: ArrayLike<number>) {

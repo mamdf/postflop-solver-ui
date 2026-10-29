@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { sanitizeBetString } from "./utils";
 import { defaultEvSettings } from "./ev-model";
+import type { NodeLock } from "./api";
 
 export type NavView = "solver" | "results";
 
@@ -14,6 +15,10 @@ export type SideView =
   | "run-solver"
   | "saved-solves"
   | "server";
+
+/** Key of a node in `nodeLocks`. */
+export const lockKey = (history: ArrayLike<number>) =>
+  Array.from(history).join(",");
 
 export const saveConfigTmp = () => {
   const config = useConfigStore();
@@ -112,6 +117,13 @@ export const useStore = defineStore("app", {
     isSolverFinished: false,
     // "chips" or "payout_delta" (tournament ICM), as reported by the server
     evUnit: "chips",
+    // Strategy locks by `lockKey`: `nodeLocks` is the draft a re-solve applies, edited on
+    // the results; `appliedLocks` are those of the current game. A fresh tree clears both.
+    nodeLocks: {} as Record<string, NodeLock>,
+    appliedLocks: {} as Record<string, NodeLock>,
+    // The saved config rebuilds the current game's tree. False for a reopened game: its
+    // tree edits are not restored, so a re-solve could lock other nodes.
+    isTreeKnown: false,
   }),
 
   getters: {
@@ -127,6 +139,24 @@ export const useStore = defineStore("app", {
       state.evUnit !== "chips" ||
       useSavedConfigStore().evModel.mode !== "chip_ev",
     evLabel: (state) => (state.evUnit === "chips" ? "EV" : "Payout EV"),
+    /** "applied" (unedited), "pending" (draft to apply), "cleared" (applied, not in the draft). */
+    lockState: (state) => (key: string) => {
+      const draft = state.nodeLocks[key];
+      const applied = state.appliedLocks[key];
+      if (!draft) return applied ? "cleared" : null;
+      const same = applied?.strategy.every((v, i) => v === draft.strategy[i]);
+      return same ? "applied" : "pending";
+    },
+  },
+
+  actions: {
+    /** Sets the locks of the current game; `resetDraft` also replaces the draft with them. */
+    setAppliedLocks(locks: NodeLock[], resetDraft = true) {
+      this.appliedLocks = Object.fromEntries(
+        locks.map((lock) => [lockKey(lock.history), lock])
+      );
+      if (resetDraft) this.nodeLocks = { ...this.appliedLocks };
+    },
   },
 });
 

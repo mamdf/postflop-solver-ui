@@ -143,11 +143,25 @@
       <template v-if="spot.type === 'player'">
         <div
           :class="
-            'px-1.5 py-1 font-semibold group-hover:opacity-100 ' +
+            'flex items-center px-1.5 py-1 font-semibold group-hover:opacity-100 ' +
             (spot.index === selectedSpotIndex ? '' : 'opacity-70')
           "
         >
           {{ spot.player.toUpperCase() }}
+          <span
+            v-if="lockState(spot.index) === 'applied'"
+            class="ml-1"
+            title="Strategy lock applied"
+          >
+            <LockClosedIcon class="w-4 h-4" />
+          </span>
+          <span
+            v-else-if="lockState(spot.index) === 'pending'"
+            class="ml-1"
+            title="Strategy lock pending: re-solve to apply it"
+          >
+            <LockOutlineIcon class="w-4 h-4" />
+          </span>
         </div>
         <div class="flex-grow overflow-y-auto">
           <button
@@ -241,7 +255,7 @@
 
 <script lang="ts">
 import { computed, defineComponent, nextTick, toRefs, ref, watch } from "vue";
-import { useSavedConfigStore } from "../store";
+import { useSavedConfigStore, useStore, lockKey } from "../store";
 import { cardText, average, colorString } from "../utils";
 import { handler } from "../api";
 import {
@@ -260,7 +274,9 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   ChevronUpIcon,
+  LockClosedIcon,
 } from "@heroicons/vue/20/solid";
+import { LockClosedIcon as LockOutlineIcon } from "@heroicons/vue/24/outline";
 
 const foldColor = { red: 0x3b, green: 0x82, blue: 0xf6 }; // blue-500
 const checkColor = { red: 0x22, green: 0xc5, blue: 0x5e }; // green-500
@@ -319,6 +335,8 @@ export default defineComponent({
     ChevronLeftIcon,
     ChevronRightIcon,
     ChevronUpIcon,
+    LockClosedIcon,
+    LockOutlineIcon,
   },
 
   props: {
@@ -349,7 +367,9 @@ export default defineComponent({
       _currentBoard: number[],
       _results: Results,
       _chanceReports: ChanceReports | null,
-      _totalBetAmount: number[]
+      _totalBetAmount: number[],
+      _history: number[],
+      _isNodeLocked: boolean
     ) => true,
   },
 
@@ -357,12 +377,15 @@ export default defineComponent({
     const navDiv = ref<HTMLDivElement | null>(null);
 
     const config = useSavedConfigStore();
+    const store = useStore();
     const { isHandlerUpdated, dealtCard } = toRefs(props);
 
     const spots = ref<Spot[]>([]);
     const rates = ref<number[] | null>(null);
     const selectedSpotIndex = ref(-1);
     const selectedChanceIndex = ref(-1);
+    // the server's lock flag of the node at `history` (catches isomorphic aliases)
+    const isNodeLocked = ref(false);
     const isDealing = ref(false);
     const canChanceReports = ref(false);
 
@@ -546,10 +569,12 @@ export default defineComponent({
 
       const currentPlayer = await handler.currentPlayer();
       let numActions: number;
+      let isLockedNode = false;
       if (["terminal", "chance"].includes(currentPlayer)) {
         numActions = 0;
       } else {
         numActions = await handler.numActions();
+        isLockedNode = await handler.isLocked();
       }
 
       // obtain results
@@ -630,6 +655,7 @@ export default defineComponent({
       // update refs
       selectedSpotIndex.value = selectedSpotIndexTmp;
       selectedChanceIndex.value = selectedChanceIndexTmp;
+      isNodeLocked.value = isLockedNode;
       isDealing.value = false;
 
       // emit event
@@ -640,7 +666,9 @@ export default defineComponent({
         currentBoard.value,
         results,
         chanceReports,
-        totalBetAmount
+        totalBetAmount,
+        Array.from(history),
+        isLockedNode
       );
 
       // scroll to selected spot
@@ -1021,6 +1049,20 @@ export default defineComponent({
       await deal(card);
     });
 
+    // Strategy lock of the player spot at `spotIndex`: applied in this game or pending.
+    const lockState = (spotIndex: number) => {
+      const history = spots.value
+        .slice(1, spotIndex)
+        .map((spot) => spot.selectedIndex);
+      if (history.includes(-1)) return null;
+      const state = store.lockState(lockKey(history));
+      if (state === "pending") return state;
+      const isSelected =
+        spotIndex === selectedSpotIndex.value &&
+        selectedChanceIndex.value === -1;
+      return state || (isSelected && isNodeLocked.value) ? "applied" : null;
+    };
+
     const spotCards = (spot: SpotRoot | SpotChance) => {
       if (spot.type === "root") {
         return spot.board.map((card) => cardText(card));
@@ -1045,6 +1087,7 @@ export default defineComponent({
       deal,
       dealArrow,
       isCardAvailable,
+      lockState,
       spotCards,
     };
   },

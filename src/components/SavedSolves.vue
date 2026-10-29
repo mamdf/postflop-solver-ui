@@ -44,7 +44,12 @@
     </thead>
     <tbody>
       <tr v-for="g in live" :key="g.game_id">
-        <td class="pr-4 font-semibold">{{ boardText(liveBoard(g)) }}</td>
+        <td class="pr-4 font-semibold">
+          {{ boardText(liveBoard(g)) }}
+          <span v-if="g.num_locks > 0" class="font-normal text-gray-600">
+            · {{ g.num_locks }} locked
+          </span>
+        </td>
         <td class="pr-4">{{ g.iterations }}</td>
         <td class="pr-4">{{ g.exploitability?.toFixed(3) ?? "-" }}</td>
         <td class="pr-4">{{ g.ev_unit }}</td>
@@ -126,7 +131,7 @@
 
 <script lang="ts">
 import { defineComponent, nextTick, ref, watch } from "vue";
-import { LiveGame, rangeApi, solvesApi, SolveRecord } from "../api";
+import { handler, LiveGame, rangeApi, solvesApi, SolveRecord } from "../api";
 import { evSettingsFromRequest } from "../ev-model";
 import { useStore, useConfigStore, saveConfig, saveConfigTmp } from "../store";
 import { parseCardString, unconvertBetString } from "../utils";
@@ -311,6 +316,8 @@ export default defineComponent({
       message.value = "Loading...";
       try {
         const res = await fetchGame();
+        store.setAppliedLocks(await handler.locks());
+        store.isTreeKnown = false;
         // force the result viewer to re-initialize on the new game
         store.isSolverFinished = false;
         await nextTick();

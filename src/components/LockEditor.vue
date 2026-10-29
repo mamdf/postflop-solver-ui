@@ -66,6 +66,13 @@
         Lock {{ scopeText }}
       </button>
       <button
+        class="button-base button-red"
+        :disabled="isAlias || lockedInScope === 0"
+        @click="unlockScope"
+      >
+        Unlock {{ scopeText }}
+      </button>
+      <button
         class="button-base button-blue"
         :disabled="scopeHands.length === 0"
         @click="startFromSolved"
@@ -174,18 +181,21 @@ export default defineComponent({
       return false;
     };
 
+    const lockedInScope = computed(
+      () => scopeHands.value.filter(isLockedHand).length
+    );
+
     const statusText = computed(() => {
       if (isAlias.value) return "Locked via an isomorphic card (edit it there)";
       if (state.value === "cleared") {
-        return "Applied in this game · cleared for the next re-solve";
+        return "Applied in this game · removed: re-solve (Run Solver) to apply";
       }
       if (!lock.value) return "Not locked";
-      const locked = scopeHands.value.filter(isLockedHand).length;
       const text =
         state.value === "applied"
           ? "applied"
-          : "pending: re-solve with locks (Run Solver) to apply";
-      return `${locked} of ${scopeHands.value.length} hands (${scopeText.value}) locked · ${text}`;
+          : "pending: re-solve (Run Solver) to apply";
+      return `${lockedInScope.value} of ${scopeHands.value.length} hands (${scopeText.value}) locked · ${text}`;
     });
 
     const sum = computed(() =>
@@ -265,6 +275,21 @@ export default defineComponent({
       { immediate: true }
     );
 
+    // Frees the scope's hands (-1); a node left with no locked hand is dropped.
+    const unlockScope = () => {
+      if (!lock.value) return;
+      const nh = numHands.value;
+      const strategy = lock.value.strategy.slice();
+      for (const hand of scopeHands.value) {
+        for (let a = 0; a < numActions.value; ++a) strategy[a * nh + hand] = -1;
+      }
+      if (strategy.some((v) => v > 0)) {
+        store.nodeLocks[key.value] = { ...lock.value, strategy };
+      } else {
+        delete store.nodeLocks[key.value];
+      }
+    };
+
     // Only the draft: the current game keeps its locks until the next re-solve.
     const clearNode = () => {
       delete store.nodeLocks[key.value];
@@ -285,7 +310,10 @@ export default defineComponent({
       sum,
       isSumValid,
       canLock,
+      isAlias,
+      lockedInScope,
       lockScope,
+      unlockScope,
       startFromSolved,
       clearNode,
       clearAll,

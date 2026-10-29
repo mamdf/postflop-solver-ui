@@ -36,7 +36,11 @@
       "
       @click="resolveWithLocks"
     >
-      Re-solve with locks ({{ numLocks }})
+      {{
+        numLocks > 0
+          ? `Re-solve with locks (${numLocks})`
+          : "Re-solve without locks"
+      }}
     </button>
   </div>
 
